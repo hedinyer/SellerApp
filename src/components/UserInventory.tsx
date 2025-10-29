@@ -261,14 +261,25 @@ export function UserInventory() {
   }
 
   async function openCameraScan() {
+    // Open the modal first so the <video> exists before attaching the stream
+    setIsScanOpen(true)
+
+    // Wait a tick for the modal to render and ref to be available
+    await new Promise(resolve => setTimeout(resolve, 50))
+
     try {
-      // Request back camera if available
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+        audio: false
+      })
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream
-        await videoRef.current.play()
+        // Ensure playback starts after metadata is ready
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current?.play()
+        }
       }
-      setIsScanOpen(true)
 
       const BarcodeDetectorCtor = (window as any).BarcodeDetector
       if (BarcodeDetectorCtor) {
@@ -293,7 +304,7 @@ export function UserInventory() {
         scanTimerRef.current = window.setTimeout(tick, 400)
       }
     } catch (_) {
-      // If camera access fails, keep modal closed
+      // If camera access fails, close the modal
       setIsScanOpen(false)
     }
   }
@@ -580,7 +591,7 @@ export function UserInventory() {
                 <button onClick={closeCameraScan} className="px-3 py-1 border rounded text-gray-700 hover:bg-gray-50">Cerrar</button>
               </div>
               <div className="relative rounded overflow-hidden border border-gray-200">
-                <video ref={videoRef} className="w-full h-64 object-cover bg-black" playsInline muted />
+                <video ref={videoRef} className="w-full h-64 object-cover bg-black" playsInline muted autoPlay />
                 <div className="absolute inset-0 pointer-events-none">
                   <div className="absolute inset-8 border-2 border-white/70 rounded" />
                 </div>
