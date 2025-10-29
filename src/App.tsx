@@ -7,11 +7,13 @@ import { AdminEmployees } from './components/AdminEmployees'
 import { AdminExpenses } from './components/AdminExpenses'
 import { AdminDebts } from './components/AdminDebts'
 import { AdminInventory } from './components/AdminInventory'
+import { UserInventory } from './components/UserInventory'
 import { TakeOrder } from './components/TakeOrder'
 import { PaymentHistory } from './components/PaymentHistory'
 import { Settings } from './components/Settings'
 import { Login } from './components/Login'
 import { KitchenDashboard } from './components/KitchenDashboard'
+import { Clients } from './components/Clients'
 import { ConfigProvider } from './contexts/ConfigContext'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { OrderProvider } from './contexts/OrderContext'
@@ -100,10 +102,14 @@ function AppContent() {
       switch (currentPage) {
         case 'dashboard':
           return <Dashboard />
+        case 'inventory':
+          return <UserInventory />
         case 'take-order':
           return <TakeOrder />
         case 'payment-history':
           return <PaymentHistory />
+        case 'clients':
+          return <Clients />
         case 'settings':
           return <Settings />
         default:

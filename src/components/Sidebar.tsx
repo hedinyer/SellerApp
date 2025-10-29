@@ -43,7 +43,7 @@ export function Sidebar({ className = '', onNavigate, currentPage = 'dashboard' 
   const menuItems: MenuItem[] = [
     {
       id: 'dashboard',
-      title: t('dashboard'),
+      title: 'Dashboard',
       icon: <HomeIcon size={20} />,
       onClick: () => {
         setActiveItem('dashboard')
@@ -51,8 +51,17 @@ export function Sidebar({ className = '', onNavigate, currentPage = 'dashboard' 
       }
     },
     {
+      id: 'inventory',
+      title: 'Inventario',
+      icon: <TableIcon size={20} />,
+      onClick: () => {
+        setActiveItem('inventory')
+        onNavigate?.('inventory')
+      }
+    },
+    {
       id: 'take-order',
-      title: t('takeOrder'),
+      title: 'Venta',
       icon: <ClipboardIcon size={20} />,
       onClick: () => {
         setActiveItem('take-order')
@@ -61,11 +70,20 @@ export function Sidebar({ className = '', onNavigate, currentPage = 'dashboard' 
     },
     {
       id: 'payment-history',
-      title: t('paymentHistory'),
+      title: 'Historial venta',
       icon: <HistoryIcon size={20} />,
       onClick: () => {
         setActiveItem('payment-history')
         onNavigate?.('payment-history')
+      }
+    },
+    {
+      id: 'clients',
+      title: 'Clientes',
+      icon: <UserIcon size={20} />,
+      onClick: () => {
+        setActiveItem('clients')
+        onNavigate?.('clients')
       }
     }
   ]
@@ -184,18 +202,15 @@ export function Sidebar({ className = '', onNavigate, currentPage = 'dashboard' 
 
         {/* Main Navigation */}
         <nav className="flex-1 py-8 px-2 space-y-1 flex flex-col justify-center">
-          {/* Dashboard */}
           {renderMenuItem(menuItems[0])}
-          
           {renderDivider()}
-          
-          {/* Tomar Orden */}
           {renderMenuItem(menuItems[1])}
-          
           {renderDivider()}
-          
-          {/* Historial */}
           {renderMenuItem(menuItems[2])}
+          {renderDivider()}
+          {renderMenuItem(menuItems[3])}
+          {renderDivider()}
+          {renderMenuItem(menuItems[4])}
         </nav>
 
         {/* Bottom Section */}

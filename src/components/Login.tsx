@@ -20,15 +20,12 @@ export function Login() {
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
-  const [selectedRole, setSelectedRole] = useState<'frontman' | 'kitchen' | 'admin'>('frontman')
+  const [selectedRole, setSelectedRole] = useState<'user' | 'admin'>('user')
   
   // Ensure username/password are set for default role on mount
   useEffect(() => {
-    if (selectedRole === 'frontman') {
+    if (selectedRole === 'user') {
       setUsername('mesero')
-      setPassword('123')
-    } else if (selectedRole === 'kitchen') {
-      setUsername('cocina')
       setPassword('123')
     } else if (selectedRole === 'admin') {
       setUsername('admin')
@@ -58,13 +55,10 @@ export function Login() {
   }, [username, password, login])
 
   // Memoize handleRoleQuickSelect
-  const handleRoleQuickSelect = useCallback((role: 'frontman' | 'kitchen' | 'admin') => {
+  const handleRoleQuickSelect = useCallback((role: 'user' | 'admin') => {
     setSelectedRole(role)
-    if (role === 'frontman') {
+    if (role === 'user') {
       setUsername('mesero')
-      setPassword('123')
-    } else if (role === 'kitchen') {
-      setUsername('cocina')
       setPassword('123')
     } else if (role === 'admin') {
       setUsername('admin')
@@ -130,13 +124,13 @@ export function Login() {
                 position: 'relative',
               }}
             >
-              {/* Mesero */}
+              {/* Usuario */}
               <button
                 type="button"
                 role="tab"
-                aria-selected={selectedRole === 'frontman'}
+                aria-selected={selectedRole === 'user'}
                 tabIndex={0}
-                onClick={() => handleRoleQuickSelect('frontman')}
+                onClick={() => handleRoleQuickSelect('user')}
                 style={{
                   flex: 1,
                   display: 'flex',
@@ -147,10 +141,10 @@ export function Login() {
                   padding: '0 0 6px 0',
                   background: 'none',
                   border: 'none',
-                  color: selectedRole === 'frontman' ? '#111' : '#888',
-                  fontWeight: selectedRole === 'frontman' ? 500 : 300,
+                  color: selectedRole === 'user' ? '#111' : '#888',
+                  fontWeight: selectedRole === 'user' ? 500 : 300,
                   fontSize: 15,
-                  borderBottom: selectedRole === 'frontman' ? '3px solid #111' : '3px solid transparent',
+                  borderBottom: selectedRole === 'user' ? '3px solid #111' : '3px solid transparent',
                   outline: 'none',
                   cursor: 'pointer',
                   transition: 'color 0.2s, border-bottom 0.3s cubic-bezier(.4,1.2,.4,1)',
@@ -159,38 +153,7 @@ export function Login() {
                   backgroundClip: 'padding-box',
                 }}
               >
-                <span>Mesero</span>
-              </button>
-              {/* Cocina */}
-              <button
-                type="button"
-                role="tab"
-                aria-selected={selectedRole === 'kitchen'}
-                tabIndex={0}
-                onClick={() => handleRoleQuickSelect('kitchen')}
-                style={{
-                  flex: 1,
-                  display: 'flex',
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 6,
-                  padding: '0 0 6px 0',
-                  background: 'none',
-                  border: 'none',
-                  color: selectedRole === 'kitchen' ? '#111' : '#888',
-                  fontWeight: selectedRole === 'kitchen' ? 500 : 300,
-                  fontSize: 15,
-                  borderBottom: selectedRole === 'kitchen' ? '3px solid #111' : '3px solid transparent',
-                  outline: 'none',
-                  cursor: 'pointer',
-                  transition: 'color 0.2s, border-bottom 0.3s cubic-bezier(.4,1.2,.4,1)',
-                  minWidth: 0,
-                  zIndex: 2,
-                  backgroundClip: 'padding-box',
-                }}
-              >
-                <span>Cocina</span>
+                <span>Usuario</span>
               </button>
               {/* Administrador */}
               <button
