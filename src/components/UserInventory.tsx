@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { supabase, uploadProductImage, type GarmentRecord } from '../lib/supabaseClient'
 import { useConfig } from '../contexts/ConfigContext'
 import {
   SearchIcon,
@@ -29,7 +30,7 @@ interface GarmentItem {
   brand?: string
   color: string
   size: string
-  price: number
+  price: number | string
   cost?: number
   status: InventoryStatus
   qty: number
@@ -49,36 +50,83 @@ export function UserInventory() {
   const [filterCategory, setFilterCategory] = useState<string>('')
   const [filterStatus, setFilterStatus] = useState<string>('')
   const [filterLevel, setFilterLevel] = useState<string>('') // normal|low|out
-  const [priceMin, setPriceMin] = useState<string>('')
-  const [priceMax, setPriceMax] = useState<string>('')
+  
   const [onlyLowStock, setOnlyLowStock] = useState(false)
   const [sortBy, setSortBy] = useState<keyof GarmentItem>('name')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
 
-  const [items, setItems] = useState<GarmentItem[]>([
-    { id: '1', name: 'Camisa Oxford', sku: 'C-1024', category: 'Camisas', brand: 'UrbanFit', color: 'Blanco', size: 'M', price: 599, cost: 280, status: 'activo', qty: 8, lowStockThreshold: 5 },
-    { id: '2', name: 'Jeans Slim Fit', sku: 'J-2201', category: 'Pantalones', brand: 'DenimCo', color: 'Azul', size: '32', price: 899, cost: 420, status: 'activo', qty: 2, lowStockThreshold: 5 },
-    { id: '3', name: 'Vestido Floral', sku: 'V-3105', category: 'Vestidos', brand: 'Bloom', color: 'Rojo', size: 'S', price: 1299, cost: 560, status: 'activo', qty: 0, lowStockThreshold: 3 },
-    { id: '4', name: 'Sudadera Unisex', sku: 'S-1540', category: 'Sudaderas', brand: 'Cozy', color: 'Negro', size: 'M', price: 899, cost: 380, status: 'activo', qty: 12, lowStockThreshold: 4 },
-    { id: '5', name: 'Playera Básica', sku: 'T-0001', category: 'Playeras', brand: 'BasicX', color: 'Blanco', size: 'L', price: 299, cost: 90, status: 'activo', qty: 3, lowStockThreshold: 5 }
-  ])
+  const [items, setItems] = useState<GarmentItem[]>([])
 
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<Partial<GarmentItem>>({ status: 'activo', lowStockThreshold: 5 })
+  const [formImageFile, setFormImageFile] = useState<File | null>(null)
+  const [formImagePreviewUrl, setFormImagePreviewUrl] = useState<string | null>(null)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [qrForId, setQrForId] = useState<string | null>(null)
   const [scanValue, setScanValue] = useState<string>("")
   const [isScanOpen, setIsScanOpen] = useState(false)
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const scanTimerRef = useRef<number | null>(null)
+  const scannerRef = useRef<any>(null)
 
   useEffect(() => {
-    const t = setTimeout(() => setIsLoading(false), 200)
-    return () => clearTimeout(t)
+    async function load() {
+      setIsLoading(true)
+      const { data, error } = await supabase
+        .from('garments')
+        .select('*')
+        .order('created_at', { ascending: false })
+      if (!error && data) {
+        const mapped: GarmentItem[] = data.map((g: GarmentRecord) => ({
+          id: g.id,
+          name: g.name,
+          sku: g.sku,
+          category: g.category,
+          brand: g.brand || '',
+          color: g.color,
+          size: g.size,
+          price: (g as any).price,
+          cost: g.cost ? Number(g.cost) : 0,
+          status: g.status as InventoryStatus,
+          qty: g.qty,
+          lowStockThreshold: g.low_stock_threshold,
+          imageUrl: g.image_url || undefined,
+          description: g.description || ''
+        }))
+        setItems(mapped)
+      }
+      setIsLoading(false)
+    }
+    load()
   }, [])
+
+  // Realtime listener to reflect qty updates immediately
+  useEffect(() => {
+    const channel = supabase
+      .channel('realtime:garments-qty')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'garments' }, (payload: any) => {
+        const updated = payload?.new
+        if (!updated?.id) return
+        setItems(prev => prev.map(i => i.id === updated.id ? { ...i, qty: updated.qty } : i))
+      })
+      .subscribe()
+
+    return () => {
+      try { supabase.removeChannel(channel) } catch (_) { /* no-op */ }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (formImageFile) {
+      const url = URL.createObjectURL(formImageFile)
+      setFormImagePreviewUrl(url)
+      return () => URL.revokeObjectURL(url)
+    } else {
+      setFormImagePreviewUrl(null)
+    }
+  }, [formImageFile])
 
   const filtered = useMemo(() => {
     let data = items.filter(i => {
@@ -88,22 +136,25 @@ export function UserInventory() {
       const matchesStatus = !filterStatus || i.status === filterStatus
       const level = i.qty === 0 ? 'out' : (i.qty <= i.lowStockThreshold ? 'low' : 'normal')
       const matchesLevel = !filterLevel || level === filterLevel
-      const withinPriceMin = !priceMin || i.price >= Number(priceMin)
-      const withinPriceMax = !priceMax || i.price <= Number(priceMax)
       const matchesOnlyLow = !onlyLowStock || level === 'low' || level === 'out'
-      return matchesQuery && matchesCategory && matchesStatus && matchesLevel && withinPriceMin && withinPriceMax && matchesOnlyLow
+      return matchesQuery && matchesCategory && matchesStatus && matchesLevel && matchesOnlyLow
     })
 
     data.sort((a, b) => {
       const dir = sortDir === 'asc' ? 1 : -1
       const av = a[sortBy]
       const bv = b[sortBy]
+      if (sortBy === 'price') {
+        const avn = Number(a.price)
+        const bvn = Number(b.price)
+        return (avn - bvn) * dir
+      }
       if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir
       return String(av).localeCompare(String(bv)) * dir
     })
 
     return data
-  }, [items, query, filterCategory, filterStatus, filterLevel, priceMin, priceMax, onlyLowStock, sortBy, sortDir])
+  }, [items, query, filterCategory, filterStatus, filterLevel, onlyLowStock, sortBy, sortDir])
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
   const pageData = filtered.slice((page - 1) * pageSize, page * pageSize)
@@ -116,6 +167,8 @@ export function UserInventory() {
   function openCreate() {
     setEditingId(null)
     setForm({ status: 'activo', lowStockThreshold: 5 })
+    setFormImageFile(null)
+    setFormImagePreviewUrl(null)
     setIsFormOpen(true)
   }
 
@@ -124,60 +177,114 @@ export function UserInventory() {
     if (!it) return
     setEditingId(id)
     setForm({ ...it })
+    setFormImageFile(null)
+    setFormImagePreviewUrl(null)
     setIsFormOpen(true)
   }
 
-  function handleSave() {
-    if (!form.name || !form.sku || !form.category || !form.price || form.price <= 0 || (form.qty ?? -1) < 0) return
-    // SKU unique check
+  async function handleSave() {
+    if (!form.name || !form.sku || !form.category || !form.price || Number(form.price) <= 0 || (form.qty ?? -1) < 0) return
     const skuExists = items.some(i => i.sku.toLowerCase() === (form.sku || '').toLowerCase() && i.id !== editingId)
     if (skuExists) return
 
-    if (editingId) {
-      setItems(items.map(i => i.id === editingId ? {
-        ...(i as GarmentItem),
-        ...form,
-        name: form.name!,
-        sku: form.sku!,
-        category: form.category!,
-        price: form.price!,
-        qty: form.qty ?? 0,
-        status: (form.status as InventoryStatus) || 'activo',
-        lowStockThreshold: form.lowStockThreshold ?? 5,
-        color: form.color || i.color,
-        size: form.size || i.size
-      } : i))
-    } else {
-      const newItem: GarmentItem = {
-        id: String(Date.now()),
-        name: form.name!,
-        sku: form.sku!,
-        category: form.category!,
-        brand: form.brand || '',
-        description: form.description || '',
-        color: form.color || 'N/A',
-        size: form.size || 'N/A',
-        price: form.price!,
-        cost: form.cost || 0,
-        status: (form.status as InventoryStatus) || 'activo',
-        qty: form.qty ?? 0,
-        lowStockThreshold: form.lowStockThreshold ?? 5,
-        imageUrl: form.imageUrl || '',
-        variants: form.variants || []
+    setIsLoading(true)
+    try {
+      let imageUrl = form.imageUrl || undefined
+      if (formImageFile && form.sku) {
+        const url = await uploadProductImage(formImageFile, form.sku)
+        if (url) imageUrl = url
       }
-      setItems([newItem, ...items])
+
+      if (editingId) {
+        const payload = {
+          name: form.name!,
+          sku: form.sku!,
+          category: form.category!,
+          brand: form.brand || null,
+          color: form.color || 'N/A',
+          size: form.size || 'N/A',
+          price: form.price!,
+          cost: form.cost ?? null,
+          status: (form.status as InventoryStatus) || 'activo',
+          qty: form.qty ?? 0,
+          low_stock_threshold: form.lowStockThreshold ?? 5,
+          image_url: imageUrl || null,
+          description: form.description || null,
+          updated_at: new Date().toISOString()
+        }
+        const { error } = await supabase.from('garments').update(payload).eq('id', editingId)
+        if (!error) {
+          setItems(items.map(i => i.id === editingId ? {
+            ...(i as GarmentItem),
+            name: payload.name,
+            sku: payload.sku,
+            category: payload.category,
+            brand: payload.brand || undefined,
+            color: payload.color,
+            size: payload.size,
+            price: payload.price,
+            cost: payload.cost || undefined,
+            status: payload.status,
+            qty: payload.qty,
+            lowStockThreshold: payload.low_stock_threshold,
+            imageUrl: imageUrl,
+            description: payload.description || undefined
+          } : i))
+        }
+      } else {
+        const payload = {
+          name: form.name!,
+          sku: form.sku!,
+          category: form.category!,
+          brand: form.brand || null,
+          color: form.color || 'N/A',
+          size: form.size || 'N/A',
+          price: form.price!,
+          cost: form.cost ?? null,
+          status: (form.status as InventoryStatus) || 'activo',
+          qty: form.qty ?? 0,
+          low_stock_threshold: form.lowStockThreshold ?? 5,
+          image_url: imageUrl || null,
+          description: form.description || null
+        }
+        const { data, error } = await supabase.from('garments').insert(payload).select().single()
+        if (!error && data) {
+          const g = data as GarmentRecord
+          const newItem: GarmentItem = {
+            id: g.id,
+            name: g.name,
+            sku: g.sku,
+            category: g.category,
+            brand: g.brand || undefined,
+            color: g.color,
+            size: g.size,
+            price: (g as any).price,
+            cost: g.cost ? Number(g.cost) : 0,
+            status: g.status as InventoryStatus,
+            qty: g.qty,
+            lowStockThreshold: g.low_stock_threshold,
+            imageUrl: g.image_url || undefined,
+            description: g.description || undefined
+          }
+          setItems([newItem, ...items])
+        }
+      }
+    } finally {
+      setIsLoading(false)
+      setIsFormOpen(false)
+      setEditingId(null)
+      setFormImageFile(null)
     }
-    setIsFormOpen(false)
-    setEditingId(null)
   }
 
   function handleDelete(id: string) {
     setDeleteConfirmId(id)
   }
 
-  function confirmDelete() {
+  async function confirmDelete() {
     if (!deleteConfirmId) return
-    setItems(items.filter(i => i.id !== deleteConfirmId))
+    const { error } = await supabase.from('garments').delete().eq('id', deleteConfirmId)
+    if (!error) setItems(items.filter(i => i.id !== deleteConfirmId))
     setDeleteConfirmId(null)
   }
 
@@ -253,58 +360,60 @@ export function UserInventory() {
     if (!code) return
     const found = items.find(i => i.sku.toLowerCase() === code.toLowerCase())
     if (found) {
-      setItems(items.map(i => i.id === found.id ? { ...i, qty: (i.qty || 0) + 1 } : i))
-      setScanValue('')
+      ;(async () => {
+        try {
+          const nextQty = (found.qty || 0) + 1
+          const { data, error } = await supabase
+            .from('garments')
+            .update({ qty: nextQty, updated_at: new Date().toISOString() })
+            .eq('id', found.id)
+            .select('id, qty')
+            .single()
+          if (!error) {
+            const updatedQty = data?.qty ?? nextQty
+            setItems(items.map(i => i.id === found.id ? { ...i, qty: updatedQty } : i))
+          } else {
+            // Fallback optimistic update if DB update fails silently
+            setItems(items.map(i => i.id === found.id ? { ...i, qty: nextQty } : i))
+          }
+        } finally {
+          setScanValue('')
+        }
+      })()
     } else {
       // no-op if not found; could show feedback in future
     }
   }
 
   async function openCameraScan() {
-    // Open the modal first so the <video> exists before attaching the stream
-    setIsScanOpen(true)
-
-    // Wait a tick for the modal to render and ref to be available
-    await new Promise(resolve => setTimeout(resolve, 50))
-
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' } },
-        audio: false
-      })
+      // Open modal first so the <video> is mounted
+      setIsScanOpen(true)
+      await new Promise(r => setTimeout(r, 50))
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        // Ensure playback starts after metadata is ready
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current?.play()
-        }
-      }
+      // @ts-ignore - Allow dynamic CDN import in browser
+      const { default: QrScanner } = await import('https://cdn.jsdelivr.net/npm/qr-scanner@1.4.2/qr-scanner.min.js')
+      ;(QrScanner as any).WORKER_PATH = 'https://cdn.jsdelivr.net/npm/qr-scanner@1.4.2/qr-scanner-worker.min.js'
 
-      const BarcodeDetectorCtor = (window as any).BarcodeDetector
-      if (BarcodeDetectorCtor) {
-        const detector = new BarcodeDetectorCtor({ formats: ['qr_code'] })
-        // Poll detection every 400ms
-        const tick = async () => {
-          if (!videoRef.current) return
-          try {
-            const codes = await detector.detect(videoRef.current)
-            if (codes && codes.length > 0) {
-              const value = (codes[0].rawValue || '').trim()
-              if (value) {
-                handleScanResult(value)
-                return
-              }
-            }
-          } catch (_) {
-            // Ignore detection errors
-          }
-          scanTimerRef.current = window.setTimeout(tick, 400)
+      if (!videoRef.current) return
+
+      const scanner = new (QrScanner as any)(
+        videoRef.current,
+        (res: any) => {
+          const value = typeof res === 'string' ? res : (res?.data || '').trim()
+          if (value) handleScanResult(value)
+        },
+        {
+          preferredCamera: 'environment',
+          returnDetailedScanResult: true,
+          highlightScanRegion: true,
+          highlightCodeOutline: true
         }
-        scanTimerRef.current = window.setTimeout(tick, 400)
-      }
+      )
+
+      scannerRef.current = scanner
+      await scanner.start()
     } catch (_) {
-      // If camera access fails, close the modal
       setIsScanOpen(false)
     }
   }
@@ -313,25 +422,42 @@ export function UserInventory() {
     // treat QR value as SKU
     const found = items.find(i => i.sku.toLowerCase() === value.toLowerCase())
     if (found) {
-      setItems(items.map(i => i.id === found.id ? { ...i, qty: (i.qty || 0) + 1 } : i))
+      ;(async () => {
+        try {
+          const nextQty = (found.qty || 0) + 1
+          const { data, error } = await supabase
+            .from('garments')
+            .update({ qty: nextQty, updated_at: new Date().toISOString() })
+            .eq('id', found.id)
+            .select('id, qty')
+            .single()
+          if (!error) {
+            const updatedQty = data?.qty ?? nextQty
+            setItems(items.map(i => i.id === found.id ? { ...i, qty: updatedQty } : i))
+          } else {
+            setItems(items.map(i => i.id === found.id ? { ...i, qty: nextQty } : i))
+          }
+        } finally {
+          closeCameraScan()
+        }
+      })()
     }
-    closeCameraScan()
   }
 
   function closeCameraScan() {
-    if (scanTimerRef.current) {
-      window.clearTimeout(scanTimerRef.current)
-      scanTimerRef.current = null
+    try {
+      if (scannerRef.current) {
+        scannerRef.current.stop()
+        if (scannerRef.current.destroy) scannerRef.current.destroy()
+        scannerRef.current = null
+      }
+    } finally {
+      if (videoRef.current) {
+        videoRef.current.pause()
+        videoRef.current.srcObject = null
+      }
+      setIsScanOpen(false)
     }
-    const stream = (videoRef.current?.srcObject as MediaStream | null)
-    if (stream) {
-      stream.getTracks().forEach(t => t.stop())
-    }
-    if (videoRef.current) {
-      videoRef.current.pause()
-      videoRef.current.srcObject = null
-    }
-    setIsScanOpen(false)
   }
 
   return (
@@ -370,12 +496,7 @@ export function UserInventory() {
                 <option value="low">Bajo stock</option>
                 <option value="out">Agotado</option>
               </select>
-              <div className="flex items-center gap-1 text-sm">
-                <span className="text-gray-600">Precio</span>
-                <input value={priceMin} onChange={e => { setPriceMin(e.target.value); setPage(1) }} placeholder="Min" className="w-20 px-2 py-1 border rounded bg-white text-black" />
-                <span>-</span>
-                <input value={priceMax} onChange={e => { setPriceMax(e.target.value); setPage(1) }} placeholder="Max" className="w-20 px-2 py-1 border rounded bg-white text-black" />
-              </div>
+              
               <label className="inline-flex items-center gap-2 text-sm cursor-pointer select-none">
                 <input type="checkbox" checked={onlyLowStock} onChange={e => { setOnlyLowStock(e.target.checked); setPage(1) }} />
                 Ver solo con bajo stock
@@ -432,7 +553,11 @@ export function UserInventory() {
                   return (
                     <tr key={item.id} className="border-t border-gray-100">
                       <td className="py-2 px-3">
-                        <div className="w-10 h-10 bg-gray-100 rounded" />
+                        {item.imageUrl ? (
+                          <img src={item.imageUrl} alt={item.name} className="w-10 h-10 rounded object-cover border border-gray-200" />
+                        ) : (
+                          <div className="w-10 h-10 bg-gray-100 rounded border border-gray-200" />
+                        )}
                       </td>
                       <td className="py-2 px-3 text-gray-900 font-medium flex items-center gap-2">
                         {level !== 'normal' && <span title={level === 'low' ? 'Bajo stock' : 'Agotado'}>{level === 'low' ? '⚠️' : '❌'}</span>}
@@ -443,7 +568,7 @@ export function UserInventory() {
                       <td className="py-2 px-3 text-gray-600">{item.color}</td>
                       <td className="py-2 px-3 text-gray-600">{item.size}</td>
                       <td className="py-2 px-3 font-semibold text-black">{item.qty}</td>
-                      <td className="py-2 px-3 text-black">{formatCurrency(item.price)}</td>
+                      <td className="py-2 px-3 text-black">{Number(item.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                       <td className="py-2 px-3">
                         <span className={`px-2 py-0.5 rounded text-xs font-medium ${item.status === 'activo' ? 'bg-green-50 text-green-700 border border-green-200' : item.status === 'inactivo' ? 'bg-gray-50 text-gray-700 border border-gray-200' : 'bg-yellow-50 text-yellow-700 border border-yellow-200'}`}>{item.status}</span>
                       </td>
@@ -451,7 +576,6 @@ export function UserInventory() {
                         <div className="flex items-center justify-end gap-2">
                           <button onClick={() => openQrModal(item.id)} className="px-2 py-1 border rounded text-gray-700 hover:bg-gray-50 text-xs">QR</button>
                           <button onClick={() => openEdit(item.id)} className="px-2 py-1 border rounded text-gray-700 hover:bg-gray-50 flex items-center gap-1"><EditIcon size={14} /> Editar</button>
-                          <button onClick={() => markAs(item.status === 'activo' ? 'inactivo' : 'activo', item.id)} className="px-2 py-1 border rounded text-gray-700 hover:bg-gray-50 text-xs">{item.status === 'activo' ? 'Desactivar' : 'Activar'}</button>
                           <button onClick={() => handleDelete(item.id)} className="px-2 py-1 border rounded text-red-600 hover:bg-red-50 flex items-center gap-1"><TrashIcon size={14} /> Eliminar</button>
                         </div>
                       </td>
@@ -545,14 +669,20 @@ export function UserInventory() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Imagen principal</label>
-                  <input type="file" accept="image/*" className="w-full text-sm" />
+                  <input type="file" accept="image/*" className="w-full text-sm" onChange={e => setFormImageFile(e.target.files?.[0] || null)} />
+                  <div className="mt-2">
+                    {formImagePreviewUrl ? (
+                      <img src={formImagePreviewUrl} alt="Vista previa" className="w-28 h-28 object-cover rounded border border-gray-200" />
+                    ) : (form.imageUrl ? (
+                      <img src={form.imageUrl} alt="Actual" className="w-28 h-28 object-cover rounded border border-gray-200" />
+                    ) : (
+                      <div className="w-28 h-28 bg-gray-100 rounded border border-gray-200 flex items-center justify-center text-xs text-gray-500">Sin imagen</div>
+                    ))}
+                  </div>
                 </div>
               </div>
               <div className="p-4 border-t border-gray-100 flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm">
-                  <button onClick={() => markAs('descatalogado')} className="px-3 py-2 border rounded text-gray-700 hover:bg-gray-50">Marcar descatalogado</button>
-                  <button onClick={() => markAs('inactivo')} className="px-3 py-2 border rounded text-gray-700 hover:bg-gray-50">Desactivar</button>
-                </div>
+                <div className="flex items-center gap-2 text-sm" />
                 <div className="flex items-center gap-2">
                   <button onClick={() => { setIsFormOpen(false); setEditingId(null) }} className="px-3 py-2 border rounded text-gray-700 hover:bg-gray-50 flex items-center gap-1"><XIcon size={16} /> Cancelar</button>
                   <button onClick={handleSave} className="px-3 py-2 rounded bg-green-600 text-white hover:bg-green-700 flex items-center gap-2"><SaveIcon size={16} /> Guardar</button>
@@ -591,7 +721,7 @@ export function UserInventory() {
                 <button onClick={closeCameraScan} className="px-3 py-1 border rounded text-gray-700 hover:bg-gray-50">Cerrar</button>
               </div>
               <div className="relative rounded overflow-hidden border border-gray-200">
-                <video ref={videoRef} className="w-full h-64 object-cover bg-black" playsInline muted autoPlay />
+                <video ref={videoRef} className="w-full h-64 object-cover bg-black" playsInline muted />
                 <div className="absolute inset-0 pointer-events-none">
                   <div className="absolute inset-8 border-2 border-white/70 rounded" />
                 </div>

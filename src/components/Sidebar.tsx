@@ -60,12 +60,12 @@ export function Sidebar({ className = '', onNavigate, currentPage = 'dashboard' 
       }
     },
     {
-      id: 'take-order',
+      id: 'clothing-pos',
       title: 'Venta',
       icon: <ClipboardIcon size={20} />,
       onClick: () => {
-        setActiveItem('take-order')
-        onNavigate?.('take-order')
+        setActiveItem('clothing-pos')
+        onNavigate?.('clothing-pos')
       }
     },
     {

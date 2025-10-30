@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import './animations.css'
 import './config-styles.css'
 import SpotlightCard from './SpotlightCard'
@@ -12,6 +12,7 @@ import {
   UserIcon
 } from './icons'
 import { PaymentModal } from './PaymentModal'
+import { supabase } from '../lib/supabaseClient'
 
 interface OrderItem {
   name: string
@@ -102,49 +103,49 @@ function formatElapsed(ms: number) {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
+// Types from DB shapes used here
+type DbCartLine = {
+  id: string
+  itemId: string
+  name: string
+  sku: string
+  variantLabel?: string
+  unitPrice: number
+  quantity: number
+  imageUrl?: string
+}
+
+type DbPaymentPart = { method: 'cash' | 'card' | 'transfer' | 'voucher' | 'other', amount: number }
+
+type DbSale = {
+  id: string
+  created_at: string
+  subtotal: number
+  discount: number
+  total: number
+  items: DbCartLine[]
+  payments: DbPaymentPart[]
+}
+
 export function Dashboard() {
   const [isLoading, setIsLoading] = useState(true)
   const { formatCurrency, getFontSizeClass } = useConfig()
 
-  useEffect(() => {
-    const timer = setTimeout(() => setIsLoading(false), 250)
-    return () => clearTimeout(timer)
-  }, [])
+  const [todaySalesCount, setTodaySalesCount] = useState(0)
+  const [todaySalesTotal, setTodaySalesTotal] = useState(0)
+  const [yesterdaySalesTotal, setYesterdaySalesTotal] = useState(0)
 
-  // Mock data para tienda de ropa
-  const todaySalesCount = 24
-  const todaySalesTotal = 12450
-  const yesterdaySalesTotal = 11100
-  const avgTicket = todaySalesTotal / todaySalesCount
-  const vsYesterdayPct = Math.round(((todaySalesTotal - yesterdaySalesTotal) / yesterdaySalesTotal) * 100)
+  const avgTicket = useMemo(() => todaySalesCount > 0 ? todaySalesTotal / todaySalesCount : 0, [todaySalesCount, todaySalesTotal])
+  const vsYesterdayPct = useMemo(() => {
+    if (yesterdaySalesTotal <= 0) return todaySalesTotal > 0 ? 100 : 0
+    return Math.round(((todaySalesTotal - yesterdaySalesTotal) / yesterdaySalesTotal) * 100)
+  }, [todaySalesTotal, yesterdaySalesTotal])
 
-  const inventoryCritical = [
-    { name: 'Playera Básica Blanca', sku: 'TS-001-WHT', qty: 3, threshold: 5 },
-    { name: 'Jeans Slim Fit Azul 32', sku: 'JN-210-BLU-32', qty: 2, threshold: 5 },
-    { name: 'Sudadera Negra M', sku: 'SW-045-BLK-M', qty: 4, threshold: 5 },
-    { name: 'Camisa Cuadros L', sku: 'SH-120-PLD-L', qty: 1, threshold: 5 }
-  ]
+  const [inventoryCritical, setInventoryCritical] = useState<{ name: string, sku: string, qty: number, threshold: number }[]>([])
 
-  const recentSales = [
-    { time: '09:10', folio: 'V-12034', items: [ { name: 'Playera Básica', qty: 2 }, { name: 'Gorra', qty: 1 } ], total: 560, method: 'Tarjeta' },
-    { time: '09:25', folio: 'V-12035', items: [ { name: 'Jeans Slim Fit', qty: 1 } ], total: 899, method: 'Efectivo' },
-    { time: '09:41', folio: 'V-12036', items: [ { name: 'Sudadera', qty: 1 }, { name: 'Calcetines', qty: 3 } ], total: 1_150, method: 'Tarjeta' },
-    { time: '09:52', folio: 'V-12037', items: [ { name: 'Camisa', qty: 1 } ], total: 720, method: 'Tarjeta' },
-    { time: '10:05', folio: 'V-12038', items: [ { name: 'Vestido', qty: 1 } ], total: 1_299, method: 'Tarjeta' },
-    { time: '10:18', folio: 'V-12039', items: [ { name: 'Jeans', qty: 1 }, { name: 'Playera', qty: 1 } ], total: 1_459, method: 'Tarjeta' },
-    { time: '10:33', folio: 'V-12040', items: [ { name: 'Chamarra', qty: 1 } ], total: 2_199, method: 'Tarjeta' },
-    { time: '10:41', folio: 'V-12041', items: [ { name: 'Polo', qty: 1 } ], total: 799, method: 'Efectivo' },
-    { time: '10:55', folio: 'V-12042', items: [ { name: 'Falda', qty: 1 } ], total: 620, method: 'Tarjeta' },
-    { time: '11:12', folio: 'V-12043', items: [ { name: 'Jeans Slim Fit', qty: 2 } ], total: 1_798, method: 'Tarjeta' }
-  ]
+  const [recentSales, setRecentSales] = useState<{ time: string, folio: string, items: { name: string, qty: number }[], total: number, method: string }[]>([])
 
-  const topProducts = [
-    { name: 'Jeans Slim Fit', qty: 18, revenue: 16182, img: '' },
-    { name: 'Playera Básica', qty: 22, revenue: 6160, img: '' },
-    { name: 'Sudadera Unisex', qty: 10, revenue: 8990, img: '' },
-    { name: 'Camisa Casual', qty: 8, revenue: 5760, img: '' },
-    { name: 'Chamarra Ligera', qty: 5, revenue: 10995, img: '' }
-  ]
+  const [topProducts, setTopProducts] = useState<{ name: string, qty: number, revenue: number, img?: string }[]>([])
 
   const dailyGoal = 20000
   const goalProgress = Math.min(100, Math.round((todaySalesTotal / dailyGoal) * 100))
@@ -155,6 +156,86 @@ export function Dashboard() {
     { title: 'Recordatorio cierre de caja', body: 'Cierre de caja en 1 hora.' },
     { title: 'Nueva política de devoluciones', body: 'Cambios permitidos hasta 15 días con ticket.' }
   ]
+
+  useEffect(() => {
+    async function loadData() {
+      setIsLoading(true)
+      try {
+        const now = new Date()
+        const startOfToday = new Date(now)
+        startOfToday.setHours(0, 0, 0, 0)
+        const startOfYesterday = new Date(startOfToday)
+        startOfYesterday.setDate(startOfToday.getDate() - 1)
+        const startOf7DaysAgo = new Date(startOfToday)
+        startOf7DaysAgo.setDate(startOfToday.getDate() - 7)
+
+        // 1) Garments - inventory crítico
+        const { data: garmentsData } = await supabase
+          .from('garments')
+          .select('name, sku, qty, low_stock_threshold')
+          .order('name', { ascending: true })
+
+        if (garmentsData) {
+          const crit = (garmentsData as any[])
+            .filter(g => typeof g.qty === 'number' && typeof g.low_stock_threshold === 'number' && g.qty < g.low_stock_threshold)
+            .map(g => ({ name: g.name as string, sku: g.sku as string, qty: Number(g.qty), threshold: Number(g.low_stock_threshold) }))
+            .slice(0, 20)
+          setInventoryCritical(crit)
+        }
+
+        // 2) Sales - últimos 7 días para KPIs y top products; y recientes
+        const { data: sales7d } = await supabase
+          .from('sales')
+          .select('*')
+          .gte('created_at', startOf7DaysAgo.toISOString())
+          .order('created_at', { ascending: false })
+          .limit(1000)
+
+        const sales = (sales7d || []) as unknown as DbSale[]
+
+        // KPIs hoy/ayer
+        const today = sales.filter(s => new Date(s.created_at) >= startOfToday)
+        const yesterday = sales.filter(s => new Date(s.created_at) >= startOfYesterday && new Date(s.created_at) < startOfToday)
+        const todayCount = today.length
+        const todayTotal = today.reduce((acc, s) => acc + Number(s.total || 0), 0)
+        const yestTotal = yesterday.reduce((acc, s) => acc + Number(s.total || 0), 0)
+        setTodaySalesCount(todayCount)
+        setTodaySalesTotal(todayTotal)
+        setYesterdaySalesTotal(yestTotal)
+
+        // Ventas recientes (últimas 10)
+        const recent = sales.slice(0, 10).map(s => {
+          const created = new Date(s.created_at)
+          const hh = created.getHours().toString().padStart(2, '0')
+          const mm = created.getMinutes().toString().padStart(2, '0')
+          const items = (s.items || []).map(i => ({ name: i.name, qty: i.quantity }))
+          const method = (s.payments && s.payments[0]?.method) ? s.payments[0].method : 'N/A'
+          return { time: `${hh}:${mm}`, folio: s.id.slice(0, 8), items, total: Number(s.total || 0), method: method === 'card' ? 'Tarjeta' : method === 'cash' ? 'Efectivo' : method }
+        })
+        setRecentSales(recent)
+
+        // Top products (por cantidad e ingresos en últimos 7 días)
+        const productMap = new Map<string, { name: string, qty: number, revenue: number }>()
+        for (const s of sales) {
+          for (const line of (s.items || [])) {
+            const key = `${line.name}`
+            const entry = productMap.get(key) || { name: line.name, qty: 0, revenue: 0 }
+            entry.qty += Number(line.quantity || 0)
+            entry.revenue += Number(line.unitPrice || 0) * Number(line.quantity || 0)
+            productMap.set(key, entry)
+          }
+        }
+        const top = Array.from(productMap.values())
+          .sort((a, b) => b.qty - a.qty)
+          .slice(0, 5)
+        setTopProducts(top)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    loadData()
+  }, [])
 
   return (
     <div 
