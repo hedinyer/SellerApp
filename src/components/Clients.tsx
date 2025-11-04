@@ -560,7 +560,8 @@ export function Clients() {
                     telefono: '',
                     correo: '',
                     cedula: '',
-                    direccion: ''
+                    direccion: '',
+                    cumpleanos: ''
                   })
                 }}
                 className="text-gray-500 hover:text-gray-800 text-lg sm:text-xl"
@@ -650,7 +651,8 @@ export function Clients() {
                     telefono: '',
                     correo: '',
                     cedula: '',
-                    direccion: ''
+                    direccion: '',
+                    cumpleanos: ''
                   })
                 }}
                 className="w-full sm:w-auto px-3 sm:px-4 py-2 border rounded text-gray-700 hover:bg-gray-50 flex items-center justify-center gap-1 text-xs sm:text-sm"
