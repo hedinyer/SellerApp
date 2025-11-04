@@ -657,7 +657,7 @@ const ConfigContext = createContext<ConfigContextType | undefined>(undefined)
 
 const defaultConfig: ConfigState = {
   language: 'es',
-  currency: 'EUR',
+  currency: 'USD',
   fontSize: 'medium'
 }
 
@@ -819,14 +819,14 @@ export function ConfigProvider({ children }: ConfigProviderProps) {
       EUR: new Intl.NumberFormat('es-ES', { 
         style: 'currency', 
         currency: 'EUR',
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0
       }),
       USD: new Intl.NumberFormat('en-US', { 
         style: 'currency', 
         currency: 'USD',
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0
       }),
       COP: new Intl.NumberFormat('es-CO', { 
         style: 'currency', 

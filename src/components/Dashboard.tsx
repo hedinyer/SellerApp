@@ -125,11 +125,15 @@ type DbSale = {
   total: number
   items: DbCartLine[]
   payments: DbPaymentPart[]
+  seller?: string | null
 }
 
 export function Dashboard() {
   const [isLoading, setIsLoading] = useState(true)
-  const { formatCurrency, getFontSizeClass } = useConfig()
+  const { /* formatCurrency, */ getFontSizeClass } = useConfig()
+
+  const numberFormatter = useMemo(() => new Intl.NumberFormat('es-ES'), [])
+  const formatThousands = (value: number) => (Number.isFinite(value) ? numberFormatter.format(value) : value)
 
   const [todaySalesCount, setTodaySalesCount] = useState(0)
   const [todaySalesTotal, setTodaySalesTotal] = useState(0)
@@ -143,9 +147,9 @@ export function Dashboard() {
 
   const [inventoryCritical, setInventoryCritical] = useState<{ name: string, sku: string, qty: number, threshold: number }[]>([])
 
-  const [recentSales, setRecentSales] = useState<{ time: string, folio: string, items: { name: string, qty: number }[], total: number, method: string }[]>([])
+  const [recentSales, setRecentSales] = useState<{ time: string, folio: string, seller?: string, items: { name: string, qty: number, variantLabel?: string }[], total: number, payments: DbPaymentPart[] }[]>([])
 
-  const [topProducts, setTopProducts] = useState<{ name: string, qty: number, revenue: number, img?: string }[]>([])
+  const [topProducts, setTopProducts] = useState<{ name: string, qty: number, revenue: number, img?: string, sku?: string, category?: string, price?: number }[]>([])
 
   const dailyGoal = 20000
   const goalProgress = Math.min(100, Math.round((todaySalesTotal / dailyGoal) * 100))
@@ -172,21 +176,28 @@ export function Dashboard() {
         // 1) Garments - inventory crítico
         const { data: garmentsData } = await supabase
           .from('garments')
-          .select('name, sku, qty, low_stock_threshold')
+          .select('name, sku, category, price, qty, low_stock_threshold, image_url')
           .order('name', { ascending: true })
 
         if (garmentsData) {
+          const metaBySku = new Map<string, { image_url?: string, category?: string, price?: number, name?: string }>()
+          try {
+            for (const g of garmentsData as any[]) {
+              if (g.sku) metaBySku.set(g.sku as string, { image_url: g.image_url as string | undefined, category: g.category as string | undefined, price: Number(g.price) || 0, name: g.name as string | undefined })
+            }
+          } catch {}
           const crit = (garmentsData as any[])
             .filter(g => typeof g.qty === 'number' && typeof g.low_stock_threshold === 'number' && g.qty < g.low_stock_threshold)
             .map(g => ({ name: g.name as string, sku: g.sku as string, qty: Number(g.qty), threshold: Number(g.low_stock_threshold) }))
             .slice(0, 20)
           setInventoryCritical(crit)
+          ;(window as any).__garmentMetaBySku = metaBySku
         }
 
         // 2) Sales - últimos 7 días para KPIs y top products; y recientes
         const { data: sales7d } = await supabase
           .from('sales')
-          .select('*')
+          .select('id, created_at, subtotal, discount, total, items, payments, seller')
           .gte('created_at', startOf7DaysAgo.toISOString())
           .order('created_at', { ascending: false })
           .limit(1000)
@@ -208,18 +219,29 @@ export function Dashboard() {
           const created = new Date(s.created_at)
           const hh = created.getHours().toString().padStart(2, '0')
           const mm = created.getMinutes().toString().padStart(2, '0')
-          const items = (s.items || []).map(i => ({ name: i.name, qty: i.quantity }))
-          const method = (s.payments && s.payments[0]?.method) ? s.payments[0].method : 'N/A'
-          return { time: `${hh}:${mm}`, folio: s.id.slice(0, 8), items, total: Number(s.total || 0), method: method === 'card' ? 'Tarjeta' : method === 'cash' ? 'Efectivo' : method }
+          const items = (s.items || []).map(i => ({ name: i.name, qty: Number(i.quantity || 0), variantLabel: i.variantLabel }))
+          // Defensive parsing: payments may come as array, object, or JSON string
+          const raw = (s as any).payments
+          let paymentsArr: any[] = []
+          if (Array.isArray(raw)) {
+            paymentsArr = raw
+          } else if (typeof raw === 'string') {
+            try { const parsed = JSON.parse(raw); if (Array.isArray(parsed)) paymentsArr = parsed } catch {}
+          } else if (raw && typeof raw === 'object') {
+            if (Array.isArray((raw as any).parts)) paymentsArr = (raw as any).parts
+          }
+          const payments = paymentsArr.map(p => ({ method: p.method, amount: Number(p.amount || 0) }))
+          return { time: `${hh}:${mm}`, folio: s.id.slice(0, 8), seller: (s as any).seller || undefined, items, total: Number(s.total || 0), payments }
         })
         setRecentSales(recent)
 
         // Top products (por cantidad e ingresos en últimos 7 días)
-        const productMap = new Map<string, { name: string, qty: number, revenue: number }>()
+        const productMap = new Map<string, { sku: string, name: string, qty: number, revenue: number }>()
+        const metaBySku = ((window as any).__garmentMetaBySku as Map<string, { image_url?: string, category?: string, price?: number, name?: string }>) || new Map()
         for (const s of sales) {
           for (const line of (s.items || [])) {
-            const key = `${line.name}`
-            const entry = productMap.get(key) || { name: line.name, qty: 0, revenue: 0 }
+            const key = `${line.sku || line.name}`
+            const entry = productMap.get(key) || { sku: line.sku || line.name, name: line.name, qty: 0, revenue: 0 }
             entry.qty += Number(line.quantity || 0)
             entry.revenue += Number(line.unitPrice || 0) * Number(line.quantity || 0)
             productMap.set(key, entry)
@@ -227,7 +249,11 @@ export function Dashboard() {
         }
         const top = Array.from(productMap.values())
           .sort((a, b) => b.qty - a.qty)
-          .slice(0, 5)
+          .slice(0, 10)
+          .map(p => {
+            const meta = metaBySku.get(p.sku) || {}
+            return { name: p.name, qty: p.qty, revenue: p.revenue, img: meta.image_url, sku: p.sku, category: meta.category, price: meta.price }
+          })
         setTopProducts(top)
       } finally {
         setIsLoading(false)
@@ -244,43 +270,44 @@ export function Dashboard() {
       } ${getFontSizeClass()}`} 
       style={{ fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif' }}
     >
-      <div className="p-4 lg:p-6">
-        <div className="mb-6 lg:mb-8 animate-fadeInSlide">
-          <h1 className="text-2xl lg:text-3xl font-bold text-black mb-2 tracking-tight">
+      <div className="p-3 sm:p-4 lg:p-6">
+        <div className="mb-4 sm:mb-6 lg:mb-8 animate-fadeInSlide">
+          <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-black mb-1 sm:mb-2 tracking-tight">
             Dashboard de Tienda de Ropa
           </h1>
-          <p className="text-gray-600 font-medium text-sm lg:text-base">
+          <p className="text-gray-600 font-medium text-xs sm:text-sm lg:text-base">
             Hoy • {new Date().toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
           </p>
         </div>
 
         {/* 1. Resumen de Ventas del Día */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4 mb-6 lg:mb-8">
-          <div className="bg-white rounded-2xl px-4 py-5 border border-gray-200 shadow-sm">
-            <p className="text-xs text-gray-600 font-medium">Ventas de hoy</p>
-            <p className="text-3xl lg:text-4xl font-extrabold text-black mt-1">{todaySalesCount}</p>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 lg:gap-4 mb-4 sm:mb-6 lg:mb-8">
+          <div className="bg-white rounded-xl sm:rounded-2xl px-3 sm:px-4 lg:px-5 py-4 sm:py-5 lg:py-6 border border-gray-200">
+            <p className="text-[10px] sm:text-xs text-gray-600 font-semibold tracking-wide leading-tight">Ventas de hoy</p>
+            <p className="text-2xl sm:text-3xl lg:text-4xl xl:text-5xl font-extrabold text-black mt-1 leading-none">{todaySalesCount}</p>
           </div>
-          <div className="bg-white rounded-2xl px-4 py-5 border border-gray-200 shadow-sm">
-            <p className="text-xs text-gray-600 font-medium">Total vendido (hoy)</p>
-            <p className="text-2xl lg:text-3xl font-extrabold text-black mt-1">{formatCurrency(todaySalesTotal)}</p>
+          <div className="bg-white rounded-xl sm:rounded-2xl px-3 sm:px-4 lg:px-5 py-4 sm:py-5 lg:py-6 border border-gray-200">
+            <p className="text-[10px] sm:text-xs text-gray-600 font-semibold tracking-wide leading-tight">Total vendido (hoy)</p>
+            <p className="text-xl sm:text-2xl lg:text-3xl xl:text-4xl font-extrabold text-black mt-1 leading-none">{formatThousands(todaySalesTotal)}</p>
           </div>
-          <div className="bg-white rounded-2xl px-4 py-5 border border-gray-200 shadow-sm">
-            <p className="text-xs text-gray-600 font-medium">Ticket promedio</p>
-            <p className="text-2xl lg:text-3xl font-extrabold text-black mt-1">{formatCurrency(avgTicket)}</p>
+          <div className="bg-white rounded-xl sm:rounded-2xl px-3 sm:px-4 lg:px-5 py-4 sm:py-5 lg:py-6 border border-gray-200">
+            <p className="text-[10px] sm:text-xs text-gray-600 font-semibold tracking-wide leading-tight">Ticket promedio</p>
+            <p className="text-xl sm:text-2xl lg:text-3xl xl:text-4xl font-extrabold text-black mt-1 leading-none">{formatThousands(avgTicket)}</p>
           </div>
-          <div className="bg-white rounded-2xl px-4 py-5 border border-gray-200 shadow-sm">
-            <p className="text-xs text-gray-600 font-medium">Variación vs ayer</p>
-            <p className={`text-2xl lg:text-3xl font-extrabold mt-1 ${vsYesterdayPct >= 0 ? 'text-green-600' : 'text-red-600'}`}>{vsYesterdayPct}%</p>
+          <div className="bg-white rounded-xl sm:rounded-2xl px-3 sm:px-4 lg:px-5 py-4 sm:py-5 lg:py-6 border border-gray-200">
+            <p className="text-[10px] sm:text-xs text-gray-600 font-semibold tracking-wide leading-tight">Variación vs ayer</p>
+            <p className={`text-xl sm:text-2xl lg:text-3xl xl:text-4xl font-extrabold mt-1 leading-none ${vsYesterdayPct >= 0 ? 'text-green-600' : 'text-red-600'}`}>{vsYesterdayPct}%</p>
           </div>
         </div>
 
         {/* 2. Inventario Crítico */}
-        <div className="bg-white rounded-[15px] border border-gray-200 shadow-sm mb-6 lg:mb-8">
-          <div className="p-4 border-b border-gray-100">
-            <h3 className="font-semibold text-gray-800">Inventario crítico</h3>
-            <p className="text-xs text-gray-600">Productos por debajo del umbral</p>
+        <div className="bg-white rounded-xl sm:rounded-[15px] border border-gray-200 shadow-sm mb-4 sm:mb-6 lg:mb-8">
+          <div className="p-3 sm:p-4 border-b border-gray-100">
+            <h3 className="font-semibold text-sm sm:text-base text-gray-800">Inventario crítico</h3>
+            <p className="text-[10px] sm:text-xs text-gray-600">Productos por debajo del umbral</p>
           </div>
-          <div className="p-4 overflow-x-auto">
+          {/* Desktop Table View */}
+          <div className="hidden md:block p-4 overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-gray-600">
@@ -306,114 +333,240 @@ export function Dashboard() {
               </tbody>
             </table>
           </div>
+          {/* Mobile Card View */}
+          <div className="md:hidden p-3 space-y-3">
+            {inventoryCritical.length > 0 ? (
+              inventoryCritical.map((p, idx) => (
+                <div key={idx} className="border border-gray-200 rounded-lg p-3 space-y-2">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-gray-800 truncate">{p.name}</p>
+                      <p className="text-xs text-gray-600 mt-1">SKU: {p.sku}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <span className="text-gray-600">Disponible: </span>
+                      <span className="font-semibold text-red-600">{p.qty}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">Umbral: </span>
+                      <span className="text-gray-800">{p.threshold}</span>
+                    </div>
+                  </div>
+                  <button className="w-full text-xs px-3 py-2 rounded bg-black text-white hover:opacity-90">
+                    Solicitar reposición
+                  </button>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-gray-500 text-center py-4">No hay productos con inventario crítico</p>
+            )}
+          </div>
         </div>
 
         {/* 3. Detalle de Ventas Recientes */}
-        <div className="bg-white rounded-[15px] border border-gray-200 shadow-sm mb-6 lg:mb-8">
-          <div className="p-4 border-b border-gray-100">
-            <h3 className="font-semibold text-gray-800">Ventas recientes</h3>
-            <p className="text-xs text-gray-600">Últimas transacciones</p>
+        <div className="bg-white rounded-xl sm:rounded-[15px] border border-gray-200 shadow-sm mb-4 sm:mb-6 lg:mb-8">
+          <div className="p-3 sm:p-4 border-b border-gray-100">
+            <h3 className="font-semibold text-sm sm:text-base text-gray-800">Ventas recientes</h3>
+            <p className="text-[10px] sm:text-xs text-gray-600">Últimas transacciones</p>
           </div>
-          <div className="p-4 overflow-x-auto">
+          {/* Desktop Table View */}
+          <div className="hidden md:block p-4 overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
-                <tr className="text-left text-gray-600">
-                  <th className="py-2 pr-4 font-medium">Hora</th>
-                  <th className="py-2 pr-4 font-medium">Folio</th>
-                  <th className="py-2 pr-4 font-medium">Productos</th>
-                  <th className="py-2 pr-4 font-medium">Total</th>
-                  <th className="py-2 font-medium">Pago</th>
+                <tr className="text-gray-600">
+                  <th className="py-2 pr-4 font-medium text-center">Hora</th>
+                  <th className="py-2 pr-4 font-medium text-center">Folio</th>
+                  <th className="py-2 pr-4 font-medium text-center">Vendedor</th>
+                  <th className="py-2 pr-4 font-medium text-center">Productos</th>
+                  <th className="py-2 pr-4 font-medium text-center">Total</th>
+                  <th className="py-2 font-medium text-center">Pago</th>
                 </tr>
               </thead>
               <tbody>
                 {recentSales.map((s, idx) => (
                   <tr key={idx} className="border-t border-gray-100">
-                    <td className="py-2 pr-4 text-gray-800">{s.time}</td>
-                    <td className="py-2 pr-4 text-gray-600">{s.folio}</td>
-                    <td className="py-2 pr-4 text-gray-700">
+                    <td className="py-2 pr-4 text-gray-800 text-center">{s.time}</td>
+                    <td className="py-2 pr-4 text-gray-600 text-center">{s.folio}</td>
+                    <td className="py-2 pr-4 text-gray-700 text-center">{s.seller || '—'}</td>
+                    <td className="py-2 pr-4 text-gray-700 text-center">
                       {s.items.map((i, j) => (
-                        <span key={j} className="inline-block mr-2 bg-gray-50 border border-gray-200 rounded px-2 py-0.5 text-xs">{i.name} ×{i.qty}</span>
+                        <span key={j} className="inline-block mr-2 mb-1 bg-gray-50 border border-gray-200 rounded px-2 py-0.5 text-xs">{i.name}{i.variantLabel ? ` – ${i.variantLabel}` : ''} ×{i.qty}</span>
                       ))}
                     </td>
-                    <td className="py-2 pr-4 font-semibold">{formatCurrency(s.total)}</td>
-                    <td className="py-2">{s.method}</td>
+                    <td className="py-2 pr-4 font-semibold text-center">
+                      <div className="text-black font-extrabold">{formatThousands(s.total)}</div>
+                    </td>
+                    <td className="py-2 text-center">
+                      {s.payments && s.payments.length > 0 ? (
+                        <div className="flex flex-wrap items-center justify-center gap-1">
+                          {s.payments.map((p, i) => (
+                            <span key={i} className="inline-flex items-center px-2 py-0.5 rounded border text-xs bg-white border-gray-200 text-gray-700">
+                              <span className="font-semibold mr-1">{formatThousands(p.amount)}</span>
+                              <span className="capitalize">{p.method === 'card' ? 'tarjeta' : p.method === 'cash' ? 'efectivo' : p.method === 'transfer' ? 'transferencia' : p.method === 'voucher' ? 'vale' : p.method}</span>
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-gray-500">N/A</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          {/* Mobile Card View */}
+          <div className="md:hidden p-3 space-y-3">
+            {recentSales.length > 0 ? (
+              recentSales.map((s, idx) => (
+                <div key={idx} className="border border-gray-200 rounded-lg p-3 space-y-2">
+                  <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+                    <div>
+                      <p className="text-xs font-semibold text-gray-800">{s.time}</p>
+                      <p className="text-[10px] text-gray-600 mt-0.5">Folio: {s.folio}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-base font-extrabold text-black">{formatThousands(s.total)}</p>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-gray-600">Vendedor:</span>
+                      <span className="text-gray-800 font-medium">{s.seller || '—'}</span>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-600 mb-1">Productos:</p>
+                      <div className="flex flex-wrap gap-1">
+                        {s.items.map((i, j) => (
+                          <span key={j} className="bg-gray-50 border border-gray-200 rounded px-2 py-0.5 text-[10px]">
+                            {i.name}{i.variantLabel ? ` – ${i.variantLabel}` : ''} ×{i.qty}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-600 mb-1">Pago:</p>
+                      {s.payments && s.payments.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {s.payments.map((p, i) => (
+                            <span key={i} className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] bg-white border-gray-200 text-gray-700">
+                              <span className="font-semibold mr-1">{formatThousands(p.amount)}</span>
+                              <span className="capitalize">{p.method === 'card' ? 'tarjeta' : p.method === 'cash' ? 'efectivo' : p.method === 'transfer' ? 'transferencia' : p.method === 'voucher' ? 'vale' : p.method}</span>
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-[10px] text-gray-500">N/A</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-gray-500 text-center py-4">No hay ventas recientes</p>
+            )}
+          </div>
         </div>
 
         {/* 4. Productos Más Vendidos */}
-        <div className="bg-white rounded-[15px] border border-gray-200 shadow-sm mb-6 lg:mb-8">
-          <div className="p-4 border-b border-gray-100">
-            <h3 className="font-semibold text-gray-800">Productos más vendidos</h3>
-            <p className="text-xs text-gray-600">Hoy y últimos 7 días</p>
+        <div className="bg-white rounded-xl sm:rounded-[15px] border border-gray-200 shadow-sm mb-4 sm:mb-6 lg:mb-8">
+          <div className="p-3 sm:p-4 border-b border-gray-100">
+            <h3 className="font-semibold text-sm sm:text-base text-gray-800">Productos más vendidos</h3>
+            <p className="text-[10px] sm:text-xs text-gray-600">Hoy y últimos 7 días</p>
           </div>
-          <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-            {topProducts.map((p, idx) => (
-              <div key={idx} className="border border-gray-200 rounded-lg p-3">
-                <div className="aspect-[4/3] bg-gray-100 rounded mb-2"></div>
-                <p className="font-medium text-gray-900">{p.name}</p>
-                <p className="text-sm text-gray-600">Cantidad: <span className="font-semibold text-gray-800">{p.qty}</span></p>
-                <p className="text-sm text-gray-600">Ingresos: <span className="font-semibold text-gray-800">{formatCurrency(p.revenue)}</span></p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* 5. Cumplimiento de Metas */}
-        <div className="bg-white rounded-[15px] border border-gray-200 shadow-sm mb-6 lg:mb-8">
-          <div className="p-4">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="font-semibold text-gray-800">Meta diaria</h3>
-              <span className="text-sm text-gray-600">Meta: {formatCurrency(dailyGoal)}</span>
+          {/* Desktop Table View */}
+          <div className="hidden md:block p-4">
+            <div className="grid grid-cols-12 text-xs font-medium text-gray-700 border-b pb-1">
+              <div className="col-span-1 text-center">Imagen</div>
+              <div className="col-span-4 text-center">Producto</div>
+              <div className="col-span-2">SKU</div>
+              <div className="col-span-2">Categoría</div>
+              <div className="col-span-1 text-right">Cantidad</div>
+              <div className="col-span-2 text-right">Ingresos</div>
             </div>
-            <div className="w-full bg-gray-200 rounded-full h-3">
-              <div className={`h-3 rounded-full ${goalProgress >= 100 ? 'bg-green-600' : 'bg-blue-600'}`} style={{ width: `${goalProgress}%` }}></div>
-            </div>
-            <div className="flex items-center justify-between mt-2 text-sm">
-              <span className="text-gray-700 font-medium">{goalProgress}% de avance</span>
-              {goalRemaining > 0 ? (
-                <span className="text-orange-600">¡Faltan {formatCurrency(goalRemaining)} para alcanzar la meta!</span>
-              ) : (
-                <span className="text-green-600">Meta alcanzada</span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* 6. Notificaciones Importantes y 7. Acciones Rápidas */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6 mb-8">
-          <div className="bg-white rounded-[15px] border border-gray-200 shadow-sm">
-            <div className="p-4 border-b border-gray-100">
-              <h3 className="font-semibold text-gray-800">Notificaciones</h3>
-              <p className="text-xs text-gray-600">Mensajes del gerente o sistema</p>
-            </div>
-            <div className="p-4 space-y-3">
-              {notifications.map((n, idx) => (
-                <div key={idx} className="border border-gray-200 rounded p-3">
-                  <p className="font-medium text-gray-900">{n.title}</p>
-                  <p className="text-sm text-gray-600">{n.body}</p>
+            <div className="divide-y">
+              {topProducts.map((p, idx) => (
+                <div key={idx} className="grid grid-cols-12 items-center py-2">
+                  {/* Imagen */}
+                  <div className="col-span-1">
+                    <div className="w-12 h-9 bg-gray-100 rounded overflow-hidden mx-auto">
+                      {p.img ? (
+                        <img src={p.img} alt={p.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-gray-400 text-[10px]">IMG</div>
+                      )}
+                    </div>
+                  </div>
+                  {/* Producto (nombre y precio) */}
+                  <div className="col-span-4">
+                    <div className="min-w-0 text-center">
+                      <div className="truncate font-medium text-gray-900">{p.name}</div>
+                      <div className="text-xs text-gray-600 truncate">{typeof p.price === 'number' ? `Precio: ${formatThousands(p.price)}` : ''}</div>
+                    </div>
+                  </div>
+                  <div className="col-span-2 text-gray-700 truncate">{p.sku || '—'}</div>
+                  <div className="col-span-2 text-gray-700 truncate">{p.category || '—'}</div>
+                  <div className="col-span-1 text-right font-semibold text-gray-900">{p.qty}</div>
+                  <div className="col-span-2 text-right font-semibold text-gray-900">{formatThousands(p.revenue)}</div>
                 </div>
               ))}
             </div>
           </div>
-
-          <div className="bg-white rounded-[15px] border border-gray-200 shadow-sm">
-            <div className="p-4 border-b border-gray-100">
-              <h3 className="font-semibold text-gray-800">Acciones rápidas</h3>
-              <p className="text-xs text-gray-600">Accesos directos</p>
-            </div>
-            <div className="p-4 grid grid-cols-2 gap-3">
-              <button className="h-24 rounded-lg border border-gray-200 hover:bg-gray-50 font-medium">Abrir caja</button>
-              <button className="h-24 rounded-lg border border-gray-200 hover:bg-gray-50 font-medium">Registrar devolución</button>
-              <button className="h-24 rounded-lg border border-gray-200 hover:bg-gray-50 font-medium">Consultar en sucursales</button>
-              <button className="h-24 rounded-lg border border-gray-200 hover:bg-gray-50 font-medium">Reportar daño/faltante</button>
-              <button className="h-24 rounded-lg border border-gray-200 hover:bg-gray-50 font-medium col-span-2">Solicitar apoyo</button>
-            </div>
+          {/* Mobile Card View */}
+          <div className="md:hidden p-3 space-y-3">
+            {topProducts.length > 0 ? (
+              topProducts.map((p, idx) => (
+                <div key={idx} className="border border-gray-200 rounded-lg p-3 space-y-2">
+                  <div className="flex items-start gap-3">
+                    {/* Imagen */}
+                    <div className="flex-shrink-0">
+                      <div className="w-16 h-16 bg-gray-100 rounded overflow-hidden">
+                        {p.img ? (
+                          <img src={p.img} alt={p.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-gray-400 text-[10px]">IMG</div>
+                        )}
+                      </div>
+                    </div>
+                    {/* Info del producto */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-gray-900 truncate">{p.name}</p>
+                      {typeof p.price === 'number' && (
+                        <p className="text-xs text-gray-600 mt-0.5">Precio: {formatThousands(p.price)}</p>
+                      )}
+                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                        <div>
+                          <span className="text-gray-600">SKU: </span>
+                          <span className="text-gray-800 font-medium truncate block">{p.sku || '—'}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-600">Categoría: </span>
+                          <span className="text-gray-800 font-medium truncate block">{p.category || '—'}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+                    <div>
+                      <p className="text-[10px] text-gray-600">Cantidad vendida</p>
+                      <p className="text-base font-semibold text-gray-900">{p.qty}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] text-gray-600">Ingresos</p>
+                      <p className="text-base font-semibold text-gray-900">{formatThousands(p.revenue)}</p>
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-gray-500 text-center py-4">No hay productos vendidos</p>
+            )}
           </div>
         </div>
+
+        
       </div>
     </div>
   )

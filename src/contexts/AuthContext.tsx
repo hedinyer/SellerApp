@@ -22,10 +22,10 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 const mockUsers: (User & { password: string })[] = [
   {
     id: '1',
-    username: 'mesero',
+    username: 'vendedor',
     password: '123',
     role: 'frontman',
-    name: 'Carlos Mesero'
+    name: 'Carlos Vendedor'
   },
   {
     id: '2',

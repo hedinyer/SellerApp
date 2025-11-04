@@ -25,7 +25,7 @@ export function Login() {
   // Ensure username/password are set for default role on mount
   useEffect(() => {
     if (selectedRole === 'user') {
-      setUsername('mesero')
+      setUsername('vendedor')
       setPassword('123')
     } else if (selectedRole === 'admin') {
       setUsername('admin')
@@ -58,7 +58,7 @@ export function Login() {
   const handleRoleQuickSelect = useCallback((role: 'user' | 'admin') => {
     setSelectedRole(role)
     if (role === 'user') {
-      setUsername('mesero')
+      setUsername('vendedor')
       setPassword('123')
     } else if (role === 'admin') {
       setUsername('admin')
@@ -93,7 +93,7 @@ export function Login() {
           style={{
             borderRadius: 9,
             padding: '24px 20px',
-            boxShadow: 'none',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.08)',
             display: 'flex',
             flexDirection: 'column',
             gap: 20,

@@ -8,8 +8,6 @@ import {
   EditIcon,
   TrashIcon,
   AlertTriangleIcon,
-  DownloadIcon,
-  UploadIcon,
   XIcon,
   SaveIcon
 } from './icons'
@@ -44,6 +42,8 @@ const categories = ['Camisas', 'Pantalones', 'Vestidos', 'Sudaderas', 'Playeras'
 
 export function UserInventory() {
   const { formatCurrency, getFontSizeClass } = useConfig()
+  const numberFormatter = useMemo(() => new Intl.NumberFormat('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 2 }), [])
+  const formatPrice = (value: number) => (Number.isFinite(value) ? numberFormatter.format(value) : value)
 
   const [isLoading, setIsLoading] = useState(true)
   const [query, setQuery] = useState('')
@@ -66,10 +66,13 @@ export function UserInventory() {
   const [formImagePreviewUrl, setFormImagePreviewUrl] = useState<string | null>(null)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [qrForId, setQrForId] = useState<string | null>(null)
-  const [scanValue, setScanValue] = useState<string>("")
   const [isScanOpen, setIsScanOpen] = useState(false)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const scannerRef = useRef<any>(null)
+  const [scanned, setScanned] = useState<{ sku: string, name: string, imageUrl?: string, count: number, color: string, size: string, category: string, id: string }[]>([])
+  const lastScannedRef = useRef<{ sku: string, timestamp: number } | null>(null)
+  const [lastScanOk, setLastScanOk] = useState<{ sku: string, name: string } | null>(null)
+  const [scanCountdown, setScanCountdown] = useState<number>(0)
 
   useEffect(() => {
     async function load() {
@@ -127,6 +130,13 @@ export function UserInventory() {
       setFormImagePreviewUrl(null)
     }
   }, [formImageFile])
+
+  // Countdown timer for scanner feedback
+  useEffect(() => {
+    if (scanCountdown <= 0) return
+    const id = setTimeout(() => setScanCountdown(s => Math.max(0, s - 1)), 1000)
+    return () => clearTimeout(id)
+  }, [scanCountdown])
 
   const filtered = useMemo(() => {
     let data = items.filter(i => {
@@ -320,8 +330,9 @@ export function UserInventory() {
     URL.revokeObjectURL(url)
   }
 
-  function getQrUrlForSku(sku: string, size = 240) {
-    const encoded = encodeURIComponent(sku)
+  function getQrUrlForData(data: unknown, size = 240) {
+    const json = JSON.stringify(data)
+    const encoded = encodeURIComponent(json)
     return `https://api.qrserver.com/v1/create-qr-code/?data=${encoded}&size=${size}x${size}&margin=1`
   }
 
@@ -333,61 +344,39 @@ export function UserInventory() {
     setQrForId(null)
   }
 
-  function printQr(sku: string) {
-    const imgUrl = getQrUrlForSku(sku, 320)
+  function printQr(product: GarmentItem) {
+    const payload = { sku: product.sku, category: product.category, color: product.color, size: product.size }
+    const imgUrl = getQrUrlForData(payload, 320)
     const w = window.open('', '_blank', 'width=360,height=420')
     if (!w) return
-    w.document.write(`<!DOCTYPE html><html><head><title>QR ${sku}</title></head><body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#fff;">
+    w.document.write(`<!DOCTYPE html><html><head><title>QR ${product.sku}</title></head><body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#fff;">
       <div style="text-align:center;">
-        <img src="${imgUrl}" alt="QR ${sku}" style="width:320px;height:320px;"/>
-        <div style="margin-top:8px;font-family:Arial,sans-serif;color:#000;">SKU: ${sku}</div>
+        <img src="${imgUrl}" alt="QR ${product.sku}" style="width:320px;height:320px;"/>
+        <div style="margin-top:8px;font-family:Arial,sans-serif;color:#000;">SKU: ${product.sku}</div>
       </div>
       <script>window.onload = function(){ setTimeout(function(){ window.print(); window.close(); }, 200); }<\/script>
     </body></html>`)
     w.document.close()
   }
 
-  function downloadQr(sku: string) {
-    const url = getQrUrlForSku(sku, 512)
+  function downloadQr(product: GarmentItem) {
+    const payload = { sku: product.sku, category: product.category, color: product.color, size: product.size }
+    const url = getQrUrlForData(payload, 512)
     const a = document.createElement('a')
     a.href = url
-    a.download = `QR_${sku}.png`
+    a.download = `QR_${product.sku}.png`
     a.click()
   }
 
-  function onScanSubmit() {
-    const code = scanValue.trim()
-    if (!code) return
-    const found = items.find(i => i.sku.toLowerCase() === code.toLowerCase())
-    if (found) {
-      ;(async () => {
-        try {
-          const nextQty = (found.qty || 0) + 1
-          const { data, error } = await supabase
-            .from('garments')
-            .update({ qty: nextQty, updated_at: new Date().toISOString() })
-            .eq('id', found.id)
-            .select('id, qty')
-            .single()
-          if (!error) {
-            const updatedQty = data?.qty ?? nextQty
-            setItems(items.map(i => i.id === found.id ? { ...i, qty: updatedQty } : i))
-          } else {
-            // Fallback optimistic update if DB update fails silently
-            setItems(items.map(i => i.id === found.id ? { ...i, qty: nextQty } : i))
-          }
-        } finally {
-          setScanValue('')
-        }
-      })()
-    } else {
-      // no-op if not found; could show feedback in future
-    }
-  }
+  // removed manual scan submit UI
 
   async function openCameraScan() {
     try {
       // Open modal first so the <video> is mounted
+      setScanned([])
+      lastScannedRef.current = null
+      setLastScanOk(null)
+      setScanCountdown(0)
       setIsScanOpen(true)
       await new Promise(r => setTimeout(r, 50))
 
@@ -419,12 +408,56 @@ export function UserInventory() {
   }
 
   function handleScanResult(value: string) {
-    // treat QR value as SKU
-    const found = items.find(i => i.sku.toLowerCase() === value.toLowerCase())
+    // Expect JSON payload with sku, fallback to raw SKU
+    let sku = value
+    try {
+      const obj = JSON.parse(value)
+      if (obj && typeof obj === 'object' && typeof obj.sku === 'string') sku = obj.sku
+    } catch {}
+    const found = items.find(i => i.sku.toLowerCase() === sku.toLowerCase())
     if (found) {
-      ;(async () => {
-        try {
-          const nextQty = (found.qty || 0) + 1
+      const now = Date.now()
+      const last = lastScannedRef.current
+      // Debounce: ignore if same product scanned within 3 seconds
+      if (last && last.sku.toLowerCase() === found.sku.toLowerCase() && (now - last.timestamp) < 3000) {
+        return
+      }
+      // Update last scanned
+      lastScannedRef.current = { sku: found.sku, timestamp: now }
+      // Update scanned list (increment count if exists, or add new)
+      setScanned(prev => {
+        const idx = prev.findIndex(p => p.sku.toLowerCase() === found.sku.toLowerCase())
+        if (idx >= 0) {
+          const copy = [...prev]
+          copy[idx] = { ...copy[idx], count: copy[idx].count + 1 }
+          return copy
+        }
+        return [...prev, { 
+          sku: found.sku, 
+          name: found.name, 
+          imageUrl: found.imageUrl, 
+          count: 1,
+          color: found.color,
+          size: found.size,
+          category: found.category,
+          id: found.id
+        }]
+      })
+      // Show feedback and start countdown
+      setLastScanOk({ sku: found.sku, name: found.name })
+      setScanCountdown(3)
+    }
+  }
+
+  async function addScannedToInventory() {
+    if (scanned.length === 0) return
+    setIsLoading(true)
+    try {
+      const updates = await Promise.all(
+        scanned.map(async (item) => {
+          const found = items.find(i => i.id === item.id)
+          if (!found) return null
+          const nextQty = (found.qty || 0) + item.count
           const { data, error } = await supabase
             .from('garments')
             .update({ qty: nextQty, updated_at: new Date().toISOString() })
@@ -432,15 +465,29 @@ export function UserInventory() {
             .select('id, qty')
             .single()
           if (!error) {
-            const updatedQty = data?.qty ?? nextQty
-            setItems(items.map(i => i.id === found.id ? { ...i, qty: updatedQty } : i))
+            return { id: found.id, qty: data?.qty ?? nextQty }
           } else {
-            setItems(items.map(i => i.id === found.id ? { ...i, qty: nextQty } : i))
+            return { id: found.id, qty: nextQty }
           }
-        } finally {
-          closeCameraScan()
-        }
-      })()
+        })
+      )
+      setItems(prev => {
+        const updated = [...prev]
+        updates.forEach(update => {
+          if (update) {
+            const idx = updated.findIndex(i => i.id === update.id)
+            if (idx >= 0) {
+              updated[idx] = { ...updated[idx], qty: update.qty }
+            }
+          }
+        })
+        return updated
+      })
+      setScanned([])
+      setLastScanOk(null)
+      setScanCountdown(0)
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -456,82 +503,88 @@ export function UserInventory() {
         videoRef.current.pause()
         videoRef.current.srcObject = null
       }
+      setLastScanOk(null)
+      setScanCountdown(0)
       setIsScanOpen(false)
     }
   }
 
   return (
-    <div className={`min-h-screen bg-gray-50 ${getFontSizeClass()}`} style={{ fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif' }}>
-      <div className="p-4 lg:p-6">
-        <div className="mb-6 lg:mb-8">
-          <h1 className="text-2xl lg:text-3xl font-bold text-black mb-2 tracking-tight">
+    <div className={`min-h-screen bg-gray-50 apple-scrollbar ${getFontSizeClass()}`} style={{ fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif' }}>
+      <div className="p-3 sm:p-4 lg:p-6">
+        <style>{`
+          .apple-scrollbar::-webkit-scrollbar,
+          .apple-scrollbar *::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+          }
+          .apple-scrollbar::-webkit-scrollbar-track,
+          .apple-scrollbar *::-webkit-scrollbar-track {
+            background: transparent;
+          }
+          .apple-scrollbar::-webkit-scrollbar-thumb,
+          .apple-scrollbar *::-webkit-scrollbar-thumb {
+            background-color: rgba(0, 0, 0, 0.2);
+            border-radius: 3px;
+          }
+          .apple-scrollbar::-webkit-scrollbar-thumb:hover,
+          .apple-scrollbar *::-webkit-scrollbar-thumb:hover {
+            background-color: rgba(0, 0, 0, 0.3);
+          }
+        `}</style>
+        <div className="mb-4 sm:mb-6 lg:mb-8">
+          <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-black mb-1 sm:mb-2 tracking-tight">
             Inventario Dwell
           </h1>
         </div>
-        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 mb-4">
+        <div className="flex flex-col gap-2 sm:gap-3 mb-3 sm:mb-4">
           <div className="flex-1">
             <div className="relative">
-              <SearchIcon size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <SearchIcon size={16} className="absolute left-2 sm:left-3 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
                 value={query}
                 onChange={e => { setQuery(e.target.value); setPage(1) }}
-                placeholder="Buscar por nombre, SKU, categoría, color, talla, marca"
-                className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded bg-white text-black"
+                placeholder="Buscar por nombre, SKU, categoría..."
+                className="w-full pl-8 sm:pl-9 pr-3 py-2 text-sm sm:text-base border border-gray-300 rounded bg-white text-black"
               />
             </div>
-            <div className="flex flex-wrap gap-2 mt-2">
-              <select value={filterCategory} onChange={e => { setFilterCategory(e.target.value); setPage(1) }} className="px-2 py-1 border rounded bg-white text-black text-sm">
+            <div className="flex flex-wrap gap-1.5 sm:gap-2 mt-2">
+              <select value={filterCategory} onChange={e => { setFilterCategory(e.target.value); setPage(1) }} className="flex-1 min-w-[140px] px-2 py-1.5 sm:py-2 border rounded bg-white text-black text-xs sm:text-sm">
                 <option value="">Todas las categorías</option>
                 {categories.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
-              <select value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(1) }} className="px-2 py-1 border rounded bg-white text-black text-sm">
+              <select value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(1) }} className="flex-1 min-w-[140px] px-2 py-1.5 sm:py-2 border rounded bg-white text-black text-xs sm:text-sm">
                 <option value="">Todos los estados</option>
                 <option value="activo">Activo</option>
                 <option value="inactivo">Inactivo</option>
                 <option value="descatalogado">Descatalogado</option>
               </select>
-              <select value={filterLevel} onChange={e => { setFilterLevel(e.target.value); setPage(1) }} className="px-2 py-1 border rounded bg-white text-black text-sm">
+              <select value={filterLevel} onChange={e => { setFilterLevel(e.target.value); setPage(1) }} className="flex-1 min-w-[140px] px-2 py-1.5 sm:py-2 border rounded bg-white text-black text-xs sm:text-sm">
                 <option value="">Nivel de inventario</option>
                 <option value="normal">Normal</option>
                 <option value="low">Bajo stock</option>
                 <option value="out">Agotado</option>
               </select>
+              <button onClick={openCameraScan} className="flex-1 sm:flex-none px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300 rounded bg-white text-gray-800 text-xs sm:text-sm whitespace-nowrap">Escanear QR</button>
+              <button onClick={openCreate} className="flex-1 sm:flex-none px-2 sm:px-3 py-1.5 sm:py-2 rounded bg-black text-white text-xs sm:text-sm flex items-center justify-center gap-1 sm:gap-2"><PlusIcon size={14} className="sm:w-4 sm:h-4" /> <span className="hidden xs:inline">Agregar Nueva Prenda</span><span className="xs:hidden">Agregar</span></button>
               
-              <label className="inline-flex items-center gap-2 text-sm cursor-pointer select-none">
-                <input type="checkbox" checked={onlyLowStock} onChange={e => { setOnlyLowStock(e.target.checked); setPage(1) }} />
-                Ver solo con bajo stock
-              </label>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-2 border border-gray-300 rounded px-2 py-1 bg-white">
-              <input
-                value={scanValue}
-                onChange={e => setScanValue(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') onScanSubmit() }}
-                placeholder="Escanear/ingresar SKU y Enter"
-                className="px-1 py-1 outline-none text-sm text-black bg-transparent"
-              />
-              <button onClick={onScanSubmit} className="text-xs px-2 py-1 rounded bg-black text-white">Añadir</button>
-            </div>
-            <button onClick={openCameraScan} className="px-3 py-2 border border-gray-300 rounded bg-white text-gray-800 text-sm">Escanear QR</button>
-            <button onClick={importCSVTemplate} className="px-3 py-2 border border-gray-300 rounded bg-white text-gray-800 text-sm flex items-center gap-1"><DownloadIcon size={16} /> Plantilla CSV</button>
-            <button onClick={exportCSV} className="px-3 py-2 border border-gray-300 rounded bg-white text-gray-800 text-sm flex items-center gap-1"><UploadIcon size={16} /> Exportar</button>
-            <button onClick={openCreate} className="px-3 py-2 rounded bg-black text-white text-sm flex items-center gap-2"><PlusIcon size={16} /> Agregar Nueva Prenda</button>
-          </div>
+          
         </div>
 
         <div className="bg-white border border-gray-200 rounded">
-          <div className="p-3 border-b border-gray-100 flex items-center justify-between">
-            <div className="text-sm text-gray-600">{filtered.length} resultados • Página {page} de {totalPages}</div>
-            <div className="flex items-center gap-2 text-sm">
-              <span>Filas:</span>
-              <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(1) }} className="border rounded px-2 py-1 bg-white">
+          <div className="p-2 sm:p-3 border-b border-gray-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+            <div className="text-xs sm:text-sm text-gray-600">{filtered.length} resultados • Página {page} de {totalPages}</div>
+            <div className="flex items-center gap-2 text-xs sm:text-sm">
+              <span className="hidden sm:inline">Filas:</span>
+              <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(1) }} className="border rounded px-2 py-1 bg-white text-xs sm:text-sm">
                 {[10,20,50].map(n => <option key={n} value={n}>{n}</option>)}
               </select>
             </div>
           </div>
-          <div className="overflow-x-auto">
+          {/* Desktop Table View */}
+          <div className="hidden md:block overflow-x-auto apple-scrollbar">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-gray-600">
@@ -568,7 +621,7 @@ export function UserInventory() {
                       <td className="py-2 px-3 text-gray-600">{item.color}</td>
                       <td className="py-2 px-3 text-gray-600">{item.size}</td>
                       <td className="py-2 px-3 font-semibold text-black">{item.qty}</td>
-                      <td className="py-2 px-3 text-black">{Number(item.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="py-2 px-3 text-black">{formatPrice(Number(item.price))}</td>
                       <td className="py-2 px-3">
                         <span className={`px-2 py-0.5 rounded text-xs font-medium ${item.status === 'activo' ? 'bg-green-50 text-green-700 border border-green-200' : item.status === 'inactivo' ? 'bg-gray-50 text-gray-700 border border-gray-200' : 'bg-yellow-50 text-yellow-700 border border-yellow-200'}`}>{item.status}</span>
                       </td>
@@ -590,28 +643,98 @@ export function UserInventory() {
               </tbody>
             </table>
           </div>
-          <div className="p-3 border-t border-gray-100 flex items-center justify-between text-sm">
+          {/* Mobile Card View */}
+          <div className="md:hidden p-3 space-y-3">
+            {pageData.length > 0 ? (
+              pageData.map(item => {
+                const level = item.qty === 0 ? 'out' : (item.qty <= item.lowStockThreshold ? 'low' : 'normal')
+                return (
+                  <div key={item.id} className="border border-gray-200 rounded-lg p-3 space-y-2">
+                    <div className="flex items-start gap-3">
+                      {/* Imagen */}
+                      <div className="flex-shrink-0">
+                        {item.imageUrl ? (
+                          <img src={item.imageUrl} alt={item.name} className="w-16 h-16 rounded object-cover border border-gray-200" />
+                        ) : (
+                          <div className="w-16 h-16 bg-gray-100 rounded border border-gray-200" />
+                        )}
+                      </div>
+                      {/* Info principal */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start gap-2 mb-1">
+                          {level !== 'normal' && <span title={level === 'low' ? 'Bajo stock' : 'Agotado'} className="text-lg flex-shrink-0">{level === 'low' ? '⚠️' : '❌'}</span>}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-gray-900 truncate">{item.name}</p>
+                            <p className="text-xs text-gray-600 mt-0.5">SKU: {item.sku}</p>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 mt-2 text-xs">
+                          <div>
+                            <span className="text-gray-600">Categoría: </span>
+                            <span className="text-gray-800">{item.category}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-600">Color: </span>
+                            <span className="text-gray-800">{item.color}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-600">Talla: </span>
+                            <span className="text-gray-800">{item.size}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-600">Stock: </span>
+                            <span className={`font-semibold ${level === 'low' ? 'text-orange-600' : level === 'out' ? 'text-red-600' : 'text-black'}`}>{item.qty}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+                      <div>
+                        <span className="text-xs text-gray-600">Precio: </span>
+                        <span className="text-sm font-semibold text-black">{formatPrice(Number(item.price))}</span>
+                      </div>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${item.status === 'activo' ? 'bg-green-50 text-green-700 border border-green-200' : item.status === 'inactivo' ? 'bg-gray-50 text-gray-700 border border-gray-200' : 'bg-yellow-50 text-yellow-700 border border-yellow-200'}`}>
+                        {item.status}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 pt-2 border-t border-gray-100">
+                      <button onClick={() => openQrModal(item.id)} className="flex-1 px-2 py-1.5 border rounded text-gray-700 hover:bg-gray-50 text-xs">QR</button>
+                      <button onClick={() => openEdit(item.id)} className="flex-1 px-2 py-1.5 border rounded text-gray-700 hover:bg-gray-50 text-xs flex items-center justify-center gap-1">
+                        <EditIcon size={12} /> Editar
+                      </button>
+                      <button onClick={() => handleDelete(item.id)} className="flex-1 px-2 py-1.5 border rounded text-red-600 hover:bg-red-50 text-xs flex items-center justify-center gap-1">
+                        <TrashIcon size={12} /> Eliminar
+                      </button>
+                    </div>
+                  </div>
+                )
+              })
+            ) : (
+              <div className="text-center py-8 text-gray-500 text-sm">Sin resultados</div>
+            )}
+          </div>
+          <div className="p-2 sm:p-3 border-t border-gray-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs sm:text-sm">
             <div className="text-gray-600">Mostrando {(page-1)*pageSize + 1}-{Math.min(page*pageSize, filtered.length)} de {filtered.length}</div>
-            <div className="flex items-center gap-2">
-              <button disabled={page<=1} onClick={() => setPage(p => Math.max(1, p-1))} className="px-2 py-1 border rounded disabled:opacity-50">Anterior</button>
-              <span>Página {page} / {totalPages}</span>
-              <button disabled={page>=totalPages} onClick={() => setPage(p => Math.min(totalPages, p+1))} className="px-2 py-1 border rounded disabled:opacity-50">Siguiente</button>
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
+              <button disabled={page<=1} onClick={() => setPage(p => Math.max(1, p-1))} className="px-3 py-1.5 border rounded disabled:opacity-50 text-xs sm:text-sm">Anterior</button>
+              <span className="text-xs sm:text-sm">Página {page} / {totalPages}</span>
+              <button disabled={page>=totalPages} onClick={() => setPage(p => Math.min(totalPages, p+1))} className="px-3 py-1.5 border rounded disabled:opacity-50 text-xs sm:text-sm">Siguiente</button>
             </div>
           </div>
         </div>
 
         {/* Modal Formulario Agregar/Editar */}
         {isFormOpen && (
-          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center">
-            <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-2xl mx-3">
-              <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-2 sm:p-3">
+            <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+              <div className="p-3 sm:p-4 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white z-10">
                 <div>
-                  <h3 className="font-bold text-black">{editingId ? 'Editar prenda' : 'Agregar nueva prenda'}</h3>
-                  <p className="text-xs text-gray-600">Completa los campos requeridos</p>
+                  <h3 className="font-bold text-sm sm:text-base text-black">{editingId ? 'Editar prenda' : 'Agregar nueva prenda'}</h3>
+                  <p className="text-[10px] sm:text-xs text-gray-600">Completa los campos requeridos</p>
                 </div>
-                <button onClick={() => { setIsFormOpen(false); setEditingId(null) }} className="text-gray-500 hover:text-gray-800"><XIcon size={20} /></button>
+                <button onClick={() => { setIsFormOpen(false); setEditingId(null) }} className="text-gray-500 hover:text-gray-800"><XIcon size={18} className="sm:w-5 sm:h-5" /></button>
               </div>
-              <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="p-3 sm:p-4 grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Nombre *</label>
                   <input value={form.name || ''} onChange={e => setForm({ ...form, name: e.target.value })} className="w-full px-3 py-2 border rounded bg-white text-black" />
@@ -681,11 +804,11 @@ export function UserInventory() {
                   </div>
                 </div>
               </div>
-              <div className="p-4 border-t border-gray-100 flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm" />
-                <div className="flex items-center gap-2">
-                  <button onClick={() => { setIsFormOpen(false); setEditingId(null) }} className="px-3 py-2 border rounded text-gray-700 hover:bg-gray-50 flex items-center gap-1"><XIcon size={16} /> Cancelar</button>
-                  <button onClick={handleSave} className="px-3 py-2 rounded bg-green-600 text-white hover:bg-green-700 flex items-center gap-2"><SaveIcon size={16} /> Guardar</button>
+              <div className="p-3 sm:p-4 border-t border-gray-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 sticky bottom-0 bg-white">
+                <div className="flex items-center gap-2 text-xs sm:text-sm" />
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <button onClick={() => { setIsFormOpen(false); setEditingId(null) }} className="flex-1 sm:flex-none px-3 py-2 border rounded text-gray-700 hover:bg-gray-50 flex items-center justify-center gap-1 text-xs sm:text-sm"><XIcon size={14} className="sm:w-4 sm:h-4" /> Cancelar</button>
+                  <button onClick={handleSave} className="flex-1 sm:flex-none px-3 py-2 rounded bg-green-600 text-white hover:bg-green-700 flex items-center justify-center gap-2 text-xs sm:text-sm"><SaveIcon size={14} className="sm:w-4 sm:h-4" /> Guardar</button>
                 </div>
               </div>
             </div>
@@ -694,16 +817,16 @@ export function UserInventory() {
 
         {/* Confirmación de eliminación */}
         {deleteConfirmId && (
-          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center">
-            <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-md mx-3 p-5">
-              <div className="flex items-center gap-3 mb-3">
-                <AlertTriangleIcon size={20} className="text-red-600" />
-                <h4 className="font-semibold text-gray-900">¿Estás seguro?</h4>
+          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+            <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-md p-4 sm:p-5">
+              <div className="flex items-center gap-2 sm:gap-3 mb-3">
+                <AlertTriangleIcon size={18} className="sm:w-5 sm:h-5 text-red-600 flex-shrink-0" />
+                <h4 className="font-semibold text-sm sm:text-base text-gray-900">¿Estás seguro?</h4>
               </div>
-              <p className="text-sm text-gray-700 mb-4">Esta acción no se puede deshacer y afectará reportes históricos.</p>
-              <div className="flex items-center justify-end gap-2">
-                <button onClick={() => setDeleteConfirmId(null)} className="px-3 py-2 border rounded text-gray-700 hover:bg-gray-50">Cancelar</button>
-                <button onClick={confirmDelete} className="px-3 py-2 rounded bg-red-600 text-white hover:bg-red-700">Eliminar</button>
+              <p className="text-xs sm:text-sm text-gray-700 mb-4">Esta acción no se puede deshacer y afectará reportes históricos.</p>
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2">
+                <button onClick={() => setDeleteConfirmId(null)} className="w-full sm:w-auto px-3 py-2 border rounded text-gray-700 hover:bg-gray-50 text-xs sm:text-sm">Cancelar</button>
+                <button onClick={confirmDelete} className="w-full sm:w-auto px-3 py-2 rounded bg-red-600 text-white hover:bg-red-700 text-xs sm:text-sm">Eliminar</button>
               </div>
             </div>
           </div>
@@ -711,22 +834,110 @@ export function UserInventory() {
 
         {/* Modal Escaneo QR por Cámara */}
         {isScanOpen && (
-          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center">
-            <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-md mx-3 p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <h4 className="font-semibold text-gray-900">Escanear QR</h4>
-                  <p className="text-xs text-gray-600">Apunta la cámara al código QR del producto</p>
+          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-2 sm:p-3">
+            <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+              <div className="p-3 sm:p-4 border-b border-gray-100 sticky top-0 bg-white z-10">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-3">
+                  <div className="flex-1 min-w-0">
+                    <h4 className="font-semibold text-sm sm:text-base text-gray-900">Escanear QR</h4>
+                    <p className="text-[10px] sm:text-xs text-gray-600 mt-1">Apunta la cámara al código QR del producto. Se acumula el conteo por producto.</p>
+                  </div>
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    <button onClick={() => setScanned([])} className="flex-1 sm:flex-none px-2 sm:px-3 py-1.5 border rounded text-gray-700 hover:bg-gray-50 text-xs sm:text-sm">Limpiar</button>
+                    <button onClick={closeCameraScan} className="flex-1 sm:flex-none px-2 sm:px-3 py-1.5 border rounded text-gray-700 hover:bg-gray-50 text-xs sm:text-sm">Cerrar</button>
+                  </div>
                 </div>
-                <button onClick={closeCameraScan} className="px-3 py-1 border rounded text-gray-700 hover:bg-gray-50">Cerrar</button>
               </div>
-              <div className="relative rounded overflow-hidden border border-gray-200">
-                <video ref={videoRef} className="w-full h-64 object-cover bg-black" playsInline muted />
-                <div className="absolute inset-0 pointer-events-none">
-                  <div className="absolute inset-8 border-2 border-white/70 rounded" />
+              <div className="p-3 sm:p-4 grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
+                <div className="relative rounded overflow-hidden border border-gray-200">
+                  <video ref={videoRef} className="w-full h-48 sm:h-72 object-cover bg-black" playsInline muted />
+                  <div className="absolute inset-0 pointer-events-none">
+                    <div className="absolute inset-8 border-2 border-white/70 rounded" />
+                  </div>
+                  {lastScanOk && scanCountdown > 0 && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <div className="bg-black/80 backdrop-blur-sm rounded-full w-32 h-32 flex items-center justify-center">
+                        <div className="text-center">
+                          <div className="text-6xl font-bold text-white mb-1">{scanCountdown}</div>
+                          <div className="text-xs text-white/80">Escaneo exitoso</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {lastScanOk && scanCountdown === 0 && (
+                    <div className="absolute left-2 bottom-2 bg-black/70 text-white text-xs rounded px-2 py-1 flex items-center gap-2">
+                      <span>✅</span>
+                      <span>{`Escaneo correcto (${lastScanOk.sku}). Listo para escanear`}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="border border-gray-200 rounded p-2 max-h-72 overflow-auto flex flex-col apple-scrollbar" style={{
+                  scrollbarWidth: 'thin',
+                  scrollbarColor: 'rgba(0, 0, 0, 0.2) transparent'
+                }}>
+                  <style>{`
+                    .apple-scrollbar::-webkit-scrollbar,
+                    .apple-scrollbar *::-webkit-scrollbar {
+                      width: 6px;
+                    }
+                    .apple-scrollbar::-webkit-scrollbar-track,
+                    .apple-scrollbar *::-webkit-scrollbar-track {
+                      background: transparent;
+                    }
+                    .apple-scrollbar::-webkit-scrollbar-thumb,
+                    .apple-scrollbar *::-webkit-scrollbar-thumb {
+                      background-color: rgba(0, 0, 0, 0.2);
+                      border-radius: 3px;
+                    }
+                    .apple-scrollbar::-webkit-scrollbar-thumb:hover,
+                    .apple-scrollbar *::-webkit-scrollbar-thumb:hover {
+                      background-color: rgba(0, 0, 0, 0.3);
+                    }
+                  `}</style>
+                  <div className="text-sm font-medium text-gray-800 mb-1">Escaneados</div>
+                  {scanned.length === 0 && (
+                    <div className="text-xs text-gray-500">Aún no hay productos escaneados.</div>
+                  )}
+                  <div className="divide-y flex-1 overflow-auto" style={{
+                    scrollbarWidth: 'thin',
+                    scrollbarColor: 'rgba(0, 0, 0, 0.2) transparent'
+                  }}>
+                    {scanned.map((p, i) => (
+                      <div key={i} className="flex items-start gap-2 py-2">
+                        <div className="w-12 h-12 bg-gray-100 rounded overflow-hidden border border-gray-200 flex-shrink-0">
+                          {p.imageUrl ? (
+                            <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full" />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="truncate text-sm text-gray-900 font-medium">{p.name}</div>
+                          <div className="truncate text-xs text-gray-600">SKU: {p.sku}</div>
+                          <div className="flex flex-wrap gap-2 mt-1">
+                            <span className="text-xs text-gray-500">Categoría: <span className="text-gray-700">{p.category}</span></span>
+                            <span className="text-xs text-gray-500">Color: <span className="text-gray-700">{p.color}</span></span>
+                            <span className="text-xs text-gray-500">Talla: <span className="text-gray-700">{p.size}</span></span>
+                          </div>
+                        </div>
+                        <div className="text-right w-12 font-semibold text-gray-900 flex-shrink-0">x{p.count}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {scanned.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-gray-200 sticky bottom-0 bg-white">
+                      <button 
+                        onClick={addScannedToInventory} 
+                        disabled={isLoading}
+                        className="w-full px-3 sm:px-4 py-2 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-xs sm:text-sm"
+                      >
+                        <PlusIcon size={14} className="sm:w-4 sm:h-4" />
+                        {isLoading ? 'Agregando...' : `Agregar al inventario (${scanned.reduce((sum, p) => sum + p.count, 0)} unidades)`}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
-              <p className="text-xs text-gray-600 mt-2">Al detectar el QR, se incrementará el stock en +1 usando el SKU.</p>
             </div>
           </div>
         )}
@@ -735,23 +946,24 @@ export function UserInventory() {
         {qrForId && (() => {
           const product = items.find(i => i.id === qrForId)
           if (!product) return null
-          const qrUrl = getQrUrlForSku(product.sku)
+          const payload = { sku: product.sku, category: product.category, color: product.color, size: product.size }
+          const qrUrl = getQrUrlForData(payload)
           return (
-            <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center">
-              <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-sm mx-3 p-5">
+            <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+              <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-sm p-4 sm:p-5">
                 <div className="mb-3">
-                  <h4 className="font-semibold text-gray-900">QR del producto</h4>
+                  <h4 className="font-semibold text-sm sm:text-base text-gray-900">QR del producto</h4>
                   <p className="text-xs text-gray-600">SKU: {product.sku}</p>
-                  <p className="text-xs text-gray-600">{product.name}</p>
+                  <p className="text-xs text-gray-600 truncate">{product.name}</p>
                 </div>
-                <div className="flex items-center justify-center mb-4">
-                  <img src={qrUrl} alt={`QR ${product.sku}`} className="w-60 h-60" />
+        <div className="flex items-center justify-center mb-4">
+          <img src={qrUrl} alt={`QR ${product.sku}`} className="w-48 h-48 sm:w-60 sm:h-60" />
                 </div>
-                <div className="flex items-center justify-between">
-                  <button onClick={() => downloadQr(product.sku)} className="px-3 py-2 border rounded text-gray-700 hover:bg-gray-50">Descargar</button>
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => printQr(product.sku)} className="px-3 py-2 rounded bg-black text-white hover:opacity-90">Imprimir</button>
-                    <button onClick={closeQrModal} className="px-3 py-2 border rounded text-gray-700 hover:bg-gray-50">Cerrar</button>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+          <button onClick={() => downloadQr(product)} className="w-full sm:w-auto px-3 py-2 border rounded text-gray-700 hover:bg-gray-50 text-xs sm:text-sm">Descargar</button>
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+            <button onClick={() => printQr(product)} className="flex-1 sm:flex-none px-3 py-2 rounded bg-black text-white hover:opacity-90 text-xs sm:text-sm">Imprimir</button>
+                    <button onClick={closeQrModal} className="flex-1 sm:flex-none px-3 py-2 border rounded text-gray-700 hover:bg-gray-50 text-xs sm:text-sm">Cerrar</button>
                   </div>
                 </div>
               </div>
@@ -762,5 +974,6 @@ export function UserInventory() {
     </div>
   )
 }
+
 
 

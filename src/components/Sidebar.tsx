@@ -9,10 +9,12 @@ import {
   TableIcon,
   MoreHorizontalIcon,
   UserIcon,
+  UsersIcon,
   HomeIcon,
-  SettingsIcon,
   LogOutIcon,
-  HistoryIcon
+  HistoryIcon,
+  ShoppingCartIcon,
+  FileTextIcon
 } from './icons'
 
 interface SidebarProps {
@@ -62,7 +64,7 @@ export function Sidebar({ className = '', onNavigate, currentPage = 'dashboard' 
     {
       id: 'clothing-pos',
       title: 'Venta',
-      icon: <ClipboardIcon size={20} />,
+      icon: <ShoppingCartIcon size={20} />,
       onClick: () => {
         setActiveItem('clothing-pos')
         onNavigate?.('clothing-pos')
@@ -78,9 +80,18 @@ export function Sidebar({ className = '', onNavigate, currentPage = 'dashboard' 
       }
     },
     {
+      id: 'quotes',
+      title: 'Cotizaciones',
+      icon: <FileTextIcon size={20} />,
+      onClick: () => {
+        setActiveItem('quotes')
+        onNavigate?.('quotes')
+      }
+    },
+    {
       id: 'clients',
       title: 'Clientes',
-      icon: <UserIcon size={20} />,
+      icon: <UsersIcon size={20} />,
       onClick: () => {
         setActiveItem('clients')
         onNavigate?.('clients')
@@ -88,17 +99,7 @@ export function Sidebar({ className = '', onNavigate, currentPage = 'dashboard' 
     }
   ]
 
-  const bottomItems: MenuItem[] = [
-    {
-      id: 'settings',
-      title: t('settings'),
-      icon: <SettingsIcon size={20} />,
-      onClick: () => {
-        setActiveItem('settings')
-        onNavigate?.('settings')
-      }
-    }
-  ]
+  const bottomItems: MenuItem[] = []
 
   function handleMenuItemClick(item: MenuItem) {
     item.onClick?.()
@@ -211,13 +212,12 @@ export function Sidebar({ className = '', onNavigate, currentPage = 'dashboard' 
           {renderMenuItem(menuItems[3])}
           {renderDivider()}
           {renderMenuItem(menuItems[4])}
+          {renderDivider()}
+          {renderMenuItem(menuItems[5])}
         </nav>
 
         {/* Bottom Section */}
         <div className="p-2 space-y-1">
-          {/* Settings */}
-          {renderMenuItem(bottomItems[0])}
-
           {/* Logout */}
           <div className="space-y-1 pt-2 border-t border-gray-50">
             <div className="relative group">

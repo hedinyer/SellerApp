@@ -9,10 +9,12 @@ import {
   TableIcon,
   MoreHorizontalIcon,
   UserIcon,
+  UsersIcon,
   HomeIcon,
-  SettingsIcon,
   LogOutIcon,
-  HistoryIcon
+  HistoryIcon,
+  DollarSignIcon,
+  CreditCardIcon
 } from './icons'
 
 interface AdminSidebarProps {
@@ -104,7 +106,7 @@ export function AdminSidebar({ className = '', onNavigate, currentPage = 'admin-
     {
       id: 'admin-employees',
       title: 'Empleados',
-      icon: <UserIcon size={20} />,
+      icon: <UsersIcon size={20} />,
       onClick: () => {
         setActiveItem('admin-employees')
         onNavigate?.('admin-employees')
@@ -113,7 +115,7 @@ export function AdminSidebar({ className = '', onNavigate, currentPage = 'admin-
     {
       id: 'admin-expenses',
       title: 'Gastos',
-      icon: <HistoryIcon size={20} />,
+      icon: <DollarSignIcon size={20} />,
       onClick: () => {
         setActiveItem('admin-expenses')
         onNavigate?.('admin-expenses')
@@ -122,7 +124,7 @@ export function AdminSidebar({ className = '', onNavigate, currentPage = 'admin-
     {
       id: 'admin-debts',
       title: 'Deudas',
-      icon: <ClipboardIcon size={20} />,
+      icon: <CreditCardIcon size={20} />,
       onClick: () => {
         setActiveItem('admin-debts')
         onNavigate?.('admin-debts')
@@ -139,17 +141,7 @@ export function AdminSidebar({ className = '', onNavigate, currentPage = 'admin-
     }
   ]
 
-  const bottomItems: MenuItem[] = [
-    {
-      id: 'admin-settings',
-      title: 'Configuración',
-      icon: <SettingsIcon size={20} />,
-      onClick: () => {
-        setActiveItem('admin-settings')
-        onNavigate?.('admin-settings')
-      }
-    }
-  ]
+  const bottomItems: MenuItem[] = []
 
   function handleMenuItemClick(item: MenuItem) {
     item.onClick?.()
@@ -267,9 +259,6 @@ export function AdminSidebar({ className = '', onNavigate, currentPage = 'admin-
 
         {/* Bottom Section */}
         <div className="p-2 space-y-1">
-          {/* Settings */}
-          {renderMenuItem(bottomItems[0])}
-
           {/* Logout */}
           <div className="space-y-1 pt-2 border-t border-gray-50">
             <div className="relative group">

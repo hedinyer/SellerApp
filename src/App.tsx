@@ -10,6 +10,7 @@ import { AdminInventory } from './components/AdminInventory'
 import { UserInventory } from './components/UserInventory'
 import { TakeOrder } from './components/TakeOrder'
 import { ClothingPOS } from './components/ClothingPOS'
+import { Quotes } from './components/Quotes'
 import { PaymentHistory } from './components/PaymentHistory'
 import { Settings } from './components/Settings'
 import { Login } from './components/Login'
@@ -111,6 +112,8 @@ function AppContent() {
           return <ClothingPOS />
         case 'payment-history':
           return <PaymentHistory />
+        case 'quotes':
+          return <Quotes />
         case 'clients':
           return <Clients />
         case 'settings':
