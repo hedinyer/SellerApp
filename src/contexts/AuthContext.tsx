@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import { supabase } from '../lib/supabaseClient'
 
 export type UserRole = 'frontman' | 'kitchen' | 'admin'
 
@@ -9,53 +10,30 @@ interface User {
   name: string
 }
 
+interface LoginResult {
+  success: boolean
+  error?: 'user_not_found' | 'wrong_password'
+}
+
 interface AuthContextType {
   user: User | null
-  login: (username: string, password: string) => Promise<boolean>
+  login: (username: string, password: string) => Promise<LoginResult>
   logout: () => void
   isLoading: boolean
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
-// Mock users - en producción esto vendría de una API
-const mockUsers: (User & { password: string })[] = [
-  {
-    id: '1',
-    username: 'vendedor',
-    password: '123',
-    role: 'frontman',
-    name: 'Carlos Vendedor'
-  },
-  {
-    id: '2',
-    username: 'cocina',
-    password: '123',
-    role: 'kitchen',
-    name: 'Ana Cocinera'
-  },
-  {
-    id: '3',
-    username: 'frontman',
-    password: '123',
-    role: 'frontman',
-    name: 'María Frontman'
-  },
-  {
-    id: '4',
-    username: 'chef',
-    password: '123',
-    role: 'kitchen',
-    name: 'José Chef'
-  },
-  {
-    id: '5',
-    username: 'admin',
-    password: 'admin123',
-    role: 'admin',
-    name: 'Administrador Principal'
-  }
-]
+// Database user record type
+interface DbUser {
+  id: string
+  user: string
+  password: string
+  role?: string
+  rol?: string
+  name?: string
+  nombre?: string
+}
 
 interface AuthProviderProps {
   children: ReactNode
@@ -65,39 +43,103 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
-  // Check for saved session on mount
+  // Initialize - always show Login first
   useEffect(() => {
-    const savedUser = localStorage.getItem('restaurant-user')
-    if (savedUser) {
-      try {
-        setUser(JSON.parse(savedUser))
-      } catch {
-        localStorage.removeItem('restaurant-user')
-      }
-    }
+    // No automatic session restoration - always show Login first
     setIsLoading(false)
   }, [])
 
-  const login = async (username: string, password: string): Promise<boolean> => {
-    setIsLoading(true)
+  const login = async (username: string, password: string): Promise<LoginResult> => {
+    // Don't use isLoading here - let Login component handle its own loading state
+    // This prevents App.tsx from showing loading screen and hiding Login component
     
-    // Simulate API call delay
-    await new Promise(resolve => setTimeout(resolve, 500))
-    
-    const foundUser = mockUsers.find(
-      u => u.username === username && u.password === password
-    )
-    
-    if (foundUser) {
-      const { password: _, ...userWithoutPassword } = foundUser
-      setUser(userWithoutPassword)
-      localStorage.setItem('restaurant-user', JSON.stringify(userWithoutPassword))
-      setIsLoading(false)
-      return true
+    // Admin short-circuit: predefined credentials, no Supabase lookup
+    const isAdminUser = username?.toString().trim().toLowerCase() === 'admin'
+    if (isAdminUser && password === 'Dwell.admin.2025*') {
+      const user: User = {
+        id: 'admin',
+        username: 'admin',
+        role: 'admin',
+        name: 'Administrador'
+      }
+      setUser(user)
+      localStorage.setItem('restaurant-user', JSON.stringify(user))
+      return { success: true }
     }
-    
-    setIsLoading(false)
-    return false
+
+    try {
+      // First, check if user exists
+      const { data: userData, error: userError } = await supabase
+        .from('Usuarios')
+        .select('*')
+        .eq('user', username)
+        .single()
+      
+      // If user doesn't exist
+      if (userError || !userData) {
+        return { success: false, error: 'user_not_found' }
+      }
+      
+      const dbUser = userData as unknown as DbUser
+      
+      // Check if password is correct
+      if (dbUser.password !== password) {
+        return { success: false, error: 'wrong_password' }
+      }
+      
+      // Map database fields to User interface
+      // Handle role mapping - check both 'role' and 'rol' fields, and map to UserRole
+      let userRole: UserRole = 'frontman' // default
+      const rawRoleValue = (dbUser.role || dbUser.rol || '')
+      const normalizedRole = rawRoleValue
+        .toString()
+        .trim()
+        .toLowerCase()
+        // remove diacritics to match values like "administrador" with/without accents
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+
+      if (
+        normalizedRole === 'admin' ||
+        normalizedRole === 'administrador' ||
+        normalizedRole.includes('admin')
+      ) {
+        userRole = 'admin'
+      } else if (
+        normalizedRole === 'kitchen' ||
+        normalizedRole === 'cocina' ||
+        normalizedRole.includes('cocina')
+      ) {
+        userRole = 'kitchen'
+      } else if (
+        normalizedRole === 'frontman' ||
+        normalizedRole === 'vendedor' ||
+        normalizedRole === 'mesero' ||
+        normalizedRole.includes('front')
+      ) {
+        userRole = 'frontman'
+      } else if (dbUser.user && dbUser.user.toLowerCase().trim() === 'admin') {
+        // Fallback: if username is 'admin', treat as admin
+        userRole = 'admin'
+      }
+      
+      // Map name - check both 'name' and 'nombre' fields
+      const userName = dbUser.name || dbUser.nombre || dbUser.user || username
+      
+      const user: User = {
+        id: dbUser.id,
+        username: dbUser.user,
+        role: userRole,
+        name: userName
+      }
+      
+      setUser(user)
+      localStorage.setItem('restaurant-user', JSON.stringify(user))
+      return { success: true }
+    } catch (error) {
+      console.error('Login error:', error)
+      return { success: false, error: 'user_not_found' }
+    }
   }
 
   const logout = () => {

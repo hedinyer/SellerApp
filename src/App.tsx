@@ -13,6 +13,7 @@ import { ClothingPOS } from './components/ClothingPOS'
 import { Quotes } from './components/Quotes'
 import { PaymentHistory } from './components/PaymentHistory'
 import { Settings } from './components/Settings'
+import ProductionOrders from './components/ProductionOrders'
 import { Login } from './components/Login'
 import { KitchenDashboard } from './components/KitchenDashboard'
 import { Clients } from './components/Clients'
@@ -114,6 +115,8 @@ function AppContent() {
           return <PaymentHistory />
         case 'quotes':
           return <Quotes />
+        case 'production-orders':
+          return <ProductionOrders />
         case 'clients':
           return <Clients />
         case 'settings':

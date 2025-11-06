@@ -4,6 +4,7 @@ import { UserIcon, EditIcon, TrashIcon, PlusIcon, SearchIcon, FilterIcon } from 
 import './animations.css'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, AreaChart, Area } from 'recharts'
 import SpotlightCard from './SpotlightCard'
+import { supabase } from '../lib/supabaseClient'
 
 interface Employee {
   id: string
@@ -77,91 +78,38 @@ export function AdminEmployees() {
   }, [editingEmployee, employees])
 
   useEffect(() => {
-    // Simular carga de datos
-    const timer = setTimeout(() => {
-      setEmployees([
-        {
-          id: '1',
-          name: 'Carlos Martínez',
-          email: 'carlos.martinez@restaurant.com',
-          phone: '+1 234-567-8901',
-          position: 'Mesero Senior',
-          salary: 1200.00,
-          payrollType: 'mensual',
-          startDate: '2023-01-15',
-          status: 'activo',
-          department: 'Servicio',
-          shifts: ['Mañana', 'Tarde']
-        },
-        {
-          id: '2',
-          name: 'Ana López',
-          email: 'ana.lopez@restaurant.com',
-          phone: '+1 234-567-8902',
-          position: 'Mesera',
-          salary: 1000.00,
-          payrollType: 'mensual',
-          startDate: '2023-03-01',
-          status: 'activo',
-          department: 'Servicio',
-          shifts: ['Tarde', 'Noche']
-        },
-        {
-          id: '3',
-          name: 'Miguel Rodríguez',
-          email: 'miguel.rodriguez@restaurant.com',
-          phone: '+1 234-567-8903',
-          position: 'Chef Principal',
-          salary: 1800.00,
-          payrollType: 'mensual',
-          startDate: '2022-11-01',
-          status: 'activo',
-          department: 'Cocina',
-          shifts: ['Mañana', 'Tarde']
-        },
-        {
-          id: '4',
-          name: 'Laura Santos',
-          email: 'laura.santos@restaurant.com',
-          phone: '+1 234-567-8904',
-          position: 'Supervisora',
-          salary: 1400.00,
-          payrollType: 'mensual',
-          startDate: '2023-02-15',
-          status: 'activo',
-          department: 'Administración',
-          shifts: ['Mañana']
-        },
-        {
-          id: '5',
-          name: 'David Pérez',
-          email: 'david.perez@restaurant.com',
-          phone: '+1 234-567-8905',
-          position: 'Cocinero',
-          salary: 1100.00,
-          payrollType: 'mensual',
-          startDate: '2023-04-01',
-          status: 'inactivo',
-          department: 'Cocina',
-          shifts: ['Noche']
-        },
-        {
-          id: '6',
-          name: 'Carmen Ruiz',
-          email: 'carmen.ruiz@restaurant.com',
-          phone: '+1 234-567-8906',
-          position: 'Cajera',
-          salary: 900.00,
-          payrollType: 'quincenal',
-          startDate: '2023-05-01',
-          status: 'activo',
-          department: 'Administración',
-          shifts: ['Mañana', 'Tarde']
-        }
-      ])
+    let isMounted = true
+    async function loadEmployees() {
+      setIsLoading(true)
+      const { data, error } = await supabase
+        .from('employees')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(1000)
+      if (!isMounted) return
+      if (error || !data) {
+        setEmployees([])
+        setIsLoading(false)
+        return
+      }
+      const mapped: Employee[] = (data as any[]).map(r => ({
+        id: String(r.id),
+        name: r.name as string,
+        email: r.email as string,
+        phone: r.phone as string,
+        position: (r.position as string) || 'Vendedor',
+        salary: Number(r.salary) || 0,
+        payrollType: (r.payroll_type as 'mensual' | 'quincenal' | 'semanal') || 'mensual',
+        startDate: (r.start_date ? new Date(r.start_date).toISOString().slice(0,10) : new Date().toISOString().slice(0,10)),
+        status: (r.status as 'activo' | 'inactivo') || 'activo',
+        department: (r.department as string) || 'Ventas',
+        shifts: (Array.isArray(r.shifts) ? r.shifts : []) as string[]
+      }))
+      setEmployees(mapped)
       setIsLoading(false)
-    }, 300)
-    return () => clearTimeout(timer)
+    }
+    loadEmployees()
+    return () => { isMounted = false }
   }, [])
 
   // Filtrar empleados
@@ -249,7 +197,7 @@ export function AdminEmployees() {
       <div className="mb-6 lg:mb-8 animate-fadeInSlide">
         
         <p className="text-gray-600 font-medium text-sm lg:text-base">
-          Administra el personal del restaurante y sus datos
+          Administra el personal de la tienda y fábrica y sus datos
         </p>
       </div>
 
@@ -1050,41 +998,68 @@ export function AdminEmployees() {
             <h2 className="font-semibold text-gray-800 text-lg mb-2">Agregar Nuevo Empleado</h2>
             <p className="text-xs text-gray-500 mb-4">Registra un nuevo empleado para el restaurante</p>
             {/* Form */}
-            <form onSubmit={(e) => {
+            <form onSubmit={async (e) => {
               e.preventDefault()
               if (!newEmployee.name || !newEmployee.email || !newEmployee.position || !newEmployee.salary || !newEmployee.department) {
                 alert('Por favor completa todos los campos obligatorios')
                 return
               }
 
-              const employee: Employee = {
-                id: (employees.length + 1).toString(),
-                name: newEmployee.name,
-                email: newEmployee.email,
-                phone: newEmployee.phone,
-                position: newEmployee.position,
-                salary: parseFloat(newEmployee.salary),
-                payrollType: newEmployee.payrollType,
-                startDate: newEmployee.startDate || new Date().toISOString().split('T')[0],
-                status: newEmployee.status,
-                department: newEmployee.department,
-                shifts: newEmployee.shifts
-              }
+              try {
+                const payload = {
+                  name: newEmployee.name,
+                  email: newEmployee.email,
+                  phone: newEmployee.phone || null,
+                  position: newEmployee.position,
+                  department: newEmployee.department,
+                  salary: parseFloat(newEmployee.salary),
+                  payroll_type: newEmployee.payrollType,
+                  start_date: newEmployee.startDate || new Date().toISOString().split('T')[0],
+                  status: newEmployee.status,
+                  shifts: newEmployee.shifts,
+                  avatar: null as any
+                }
+                const { data, error } = await supabase
+                  .from('employees')
+                  .insert(payload)
+                  .select('*')
+                  .single()
+                if (error) throw error
 
-              setEmployees(prev => [...prev, employee])
-              setNewEmployee({
-                name: '',
-                email: '',
-                phone: '',
-                position: '',
-                salary: '',
-                payrollType: 'mensual',
-                startDate: '',
-                status: 'activo',
-                department: '',
-                shifts: []
-              })
-              setIsAddingEmployee(false)
+                if (data) {
+                  const created: Employee = {
+                    id: String(data.id),
+                    name: data.name,
+                    email: data.email,
+                    phone: data.phone,
+                    position: data.position,
+                    salary: Number(data.salary) || 0,
+                    payrollType: data.payroll_type,
+                    startDate: data.start_date,
+                    status: data.status,
+                    department: data.department,
+                    shifts: Array.isArray(data.shifts) ? data.shifts : []
+                  }
+                  setEmployees(prev => [created, ...prev])
+                }
+
+                setNewEmployee({
+                  name: '',
+                  email: '',
+                  phone: '',
+                  position: '',
+                  salary: '',
+                  payrollType: 'mensual',
+                  startDate: '',
+                  status: 'activo',
+                  department: '',
+                  shifts: []
+                })
+                setIsAddingEmployee(false)
+              } catch (err) {
+                console.error(err)
+                alert('No se pudo guardar el empleado. Intenta nuevamente.')
+              }
             }}>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                 {/* Información Personal */}
@@ -1158,7 +1133,7 @@ export function AdminEmployees() {
                       value={newEmployee.position}
                       onChange={(e) => setNewEmployee(prev => ({ ...prev, position: e.target.value }))}
                       className="w-full px-3 py-2 bg-white text-black border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                      placeholder="Ej: Mesero, Chef, Cajero"
+                      placeholder="Ej: Vendedor, Administración, Fábrica"
                       required
                     />
                   </div>
@@ -1174,11 +1149,9 @@ export function AdminEmployees() {
                       required
                     >
                       <option value="">Seleccionar departamento</option>
-                      <option value="Servicio">Servicio</option>
-                      <option value="Cocina">Cocina</option>
+                      <option value="Ventas">Ventas</option>
                       <option value="Administración">Administración</option>
-                      <option value="Limpieza">Limpieza</option>
-                      <option value="Seguridad">Seguridad</option>
+                      <option value="Fábrica">Fábrica</option>
                     </select>
                   </div>
 
@@ -1391,7 +1364,7 @@ export function AdminEmployees() {
                         value={editEmployee.position}
                         onChange={(e) => setEditEmployee(prev => ({ ...prev, position: e.target.value }))}
                         className="w-full px-3 py-2 bg-white text-black border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                        placeholder="Ej: Mesero, Chef, Cajero"
+                      placeholder="Ej: Vendedor, Administración, Fábrica"
                         required
                       />
                     </div>

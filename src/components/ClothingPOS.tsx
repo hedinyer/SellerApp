@@ -147,6 +147,8 @@ export function ClothingPOS() {
   const [lastScanOk, setLastScanOk] = useState<{ sku: string, name: string } | null>(null)
   const [scanCountdown, setScanCountdown] = useState<number>(0)
   const [logoBase64, setLogoBase64] = useState<string>('')
+  const [sellers, setSellers] = useState<{ id: string, name: string }[]>([])
+  const [selectedSellerId, setSelectedSellerId] = useState<string>('')
 
   const fontClass = getFontSizeClass()
 
@@ -185,6 +187,27 @@ export function ClothingPOS() {
       }
     }
     loadLogo()
+  }, [])
+
+  // Load active sellers from employees (department: Ventas)
+  useEffect(() => {
+    let mounted = true
+    ;(async () => {
+      const { data, error } = await supabase
+        .from('employees')
+        .select('id, name, department, status')
+        .eq('department', 'Ventas')
+        .order('name', { ascending: true })
+      if (!mounted) return
+      if (!error && data) {
+        const list = (data as any[])
+          .filter(r => (r.status === 'activo' || !r.status))
+          .map(r => ({ id: String(r.id), name: String(r.name || 'Sin nombre') }))
+        setSellers(list)
+        if (list.length && !selectedSellerId) setSelectedSellerId(list[0].id)
+      }
+    })()
+    return () => { mounted = false }
   }, [])
 
   useEffect(() => {
@@ -312,14 +335,32 @@ export function ClothingPOS() {
   }
 
   function upsertCart(line: CartLine) {
+    // Obtener stock disponible para esta línea (variante)
+    const getAvailableFor = (ln: CartLine): number => {
+      const item = inventory.find(it => it.id === ln.itemId)
+      if (!item) return Infinity
+      if (ln.variantLabel && item.variants && item.variants.length > 0) {
+        const [color, size] = ln.variantLabel.split(' / ')
+        const v = item.variants.find(v => v.color === color && v.size === size)
+        return v ? Math.max(0, Number(v.qty || 0)) : 0
+      }
+      // Si no hay variantes, no limitamos aquí (o usar primera variante si existe)
+      if (item.variants && item.variants.length > 0) return Math.max(0, Number(item.variants[0].qty || 0))
+      return Infinity
+    }
+
     setCart(prev => {
       const idx = prev.findIndex(l => l.id === line.id)
+      const available = getAvailableFor(line)
       if (idx >= 0) {
         const copy = [...prev]
-        copy[idx] = { ...copy[idx], quantity: copy[idx].quantity + line.quantity }
+        const current = copy[idx]
+        const targetQty = Math.min(available, current.quantity + line.quantity)
+        copy[idx] = { ...current, quantity: Math.max(1, targetQty) }
         return copy
       }
-      return [...prev, line]
+      const initialQty = Math.min(available, line.quantity)
+      return [...prev, { ...line, quantity: Math.max(1, initialQty) }]
     })
   }
 
@@ -344,7 +385,24 @@ export function ClothingPOS() {
   }
 
   function changeQty(lineId: string, delta: number) {
-    setCart(prev => prev.map(l => l.id === lineId ? { ...l, quantity: Math.max(1, l.quantity + delta) } : l))
+    setCart(prev => prev.map(l => {
+      if (l.id !== lineId) return l
+      // Calcular stock disponible para esta línea
+      const item = inventory.find(it => it.id === l.itemId)
+      let available = Infinity
+      if (item) {
+        if (l.variantLabel && item.variants && item.variants.length > 0) {
+          const [color, size] = l.variantLabel.split(' / ')
+          const v = item.variants.find(v => v.color === color && v.size === size)
+          available = v ? Math.max(0, Number(v.qty || 0)) : 0
+        } else if (item.variants && item.variants.length > 0) {
+          available = Math.max(0, Number(item.variants[0].qty || 0))
+        }
+      }
+      const next = l.quantity + delta
+      const capped = Math.min(available, Math.max(1, next))
+      return { ...l, quantity: capped }
+    }))
   }
 
   function removeLine(lineId: string) {
@@ -529,17 +587,23 @@ export function ClothingPOS() {
           
           if (variant && variant.qty > 0) {
             const lineId = `${found.id}-${variant.color}-${variant.size}`
-            const line: CartLine = {
-              id: lineId,
-              itemId: found.id,
-              name: found.name,
-              sku: found.sku,
-              unitPrice: found.price,
-              quantity: item.count,
-              imageUrl: found.imageUrl,
-              variantLabel: `${variant.color} / ${variant.size}`
+            // Calcular cuánto se puede agregar respetando el stock y lo que ya hay en el carrito
+            const alreadyInCart = cart.find(l => l.id === lineId)?.quantity || 0
+            const remaining = Math.max(0, Number(variant.qty || 0) - alreadyInCart)
+            const toAdd = Math.min(remaining, item.count)
+            if (toAdd > 0) {
+              const line: CartLine = {
+                id: lineId,
+                itemId: found.id,
+                name: found.name,
+                sku: found.sku,
+                unitPrice: found.price,
+                quantity: toAdd,
+                imageUrl: found.imageUrl,
+                variantLabel: `${variant.color} / ${variant.size}`
+              }
+              upsertCart(line)
             }
-            upsertCart(line)
           }
         } else {
           // If no variant info, show variant picker for first occurrence
@@ -648,6 +712,7 @@ export function ClothingPOS() {
       return
     }
 
+    const sellerName = (sellers.find(s => s.id === selectedSellerId)?.name) || ''
     const saleToInsert = {
       subtotal,
       discount: discountTotal,
@@ -655,7 +720,7 @@ export function ClothingPOS() {
       items: cart,
       payments: paymentParts,
       customer: customer,
-      seller: 'Vendedor'
+      seller: sellerName || null
     }
 
     ;(async () => {
@@ -679,6 +744,57 @@ export function ClothingPOS() {
         payments: r.payments || [],
         customer: r.customer || undefined,
         seller: r.seller || undefined
+      }
+
+      // Reducir stock en base de datos por cada línea vendida
+      try {
+        for (const l of cart) {
+          const sku = l.sku
+          let color: string | undefined
+          let size: string | undefined
+          if (l.variantLabel) {
+            const parts = l.variantLabel.split(' / ')
+            color = parts[0]
+            size = parts[1]
+          }
+
+          // 1) Buscar la prenda específica para leer qty actual
+          let selectQuery = supabase
+            .from('garments')
+            .select('id, qty')
+            .eq('sku', sku)
+            .limit(1)
+
+          if (color) selectQuery = selectQuery.eq('color', color)
+          if (size) selectQuery = selectQuery.eq('size', size)
+
+          const { data: garmentRow, error: selErr } = await selectQuery.single()
+          if (!selErr && garmentRow) {
+            const newQty = Math.max(0, Number(garmentRow.qty || 0) - Number(l.quantity || 0))
+            await supabase
+              .from('garments')
+              .update({ qty: newQty })
+              .eq('id', garmentRow.id)
+          } else {
+            // Fallback: intentar por id directo si existe
+            if (l.itemId) {
+              const { data: byId } = await supabase
+                .from('garments')
+                .select('id, qty')
+                .eq('id', l.itemId)
+                .single()
+              if (byId) {
+                const newQty = Math.max(0, Number(byId.qty || 0) - Number(l.quantity || 0))
+                await supabase
+                  .from('garments')
+                  .update({ qty: newQty })
+                  .eq('id', byId.id)
+              }
+            }
+          }
+        }
+      } catch (_) {
+        // Silenciar errores de stock para no bloquear la venta, pero ya se actualizó localmente
       }
 
       setInventory(updated)
@@ -1145,23 +1261,21 @@ export function ClothingPOS() {
                   </button>
                 </div>
               </div>
-              <div>
-                <label className="text-[10px] sm:text-xs text-black">Cupón</label>
-                <div className="flex gap-1">
-                  <input 
-                    value={couponCode} 
-                    onChange={e => setCouponCode(e.target.value)} 
-                    placeholder="PROMO10" 
-                    className="flex-1 border rounded px-1.5 sm:px-2 py-1 text-xs sm:text-sm bg-white text-black"
-                    onKeyPress={e => {
-                      if (e.key === 'Enter') {
-                        applyCoupon()
-                      }
-                    }}
-                  />
-                  <button className="border rounded px-1.5 sm:px-2 py-1 text-xs sm:text-sm bg-white text-black hover:bg-gray-50 whitespace-nowrap" onClick={applyCoupon}>Aplicar</button>
-                </div>
-              </div>
+            </div>
+
+            {/* Seller selection */}
+            <div className="mt-2 sm:mt-3">
+              <label className="text-[10px] sm:text-xs text-black">Vendedor</label>
+              <select
+                value={selectedSellerId}
+                onChange={e => setSelectedSellerId(e.target.value)}
+                className="w-full border rounded px-2 py-1.5 bg-white text-black text-xs sm:text-sm"
+              >
+                {sellers.length === 0 && <option value="">—</option>}
+                {sellers.map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
             </div>
 
             {/* Totals */}

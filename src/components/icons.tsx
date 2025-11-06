@@ -784,3 +784,23 @@ export function FileTextIcon({ className = '', size = 24 }: IconProps) {
     </svg>
   )
 }
+
+export function HammerIcon({ className = '', size = 24 }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M14 3l7 7" />
+      <path d="M14 3h-4l-2 2 3 3-6 6 3 3 6-6 3 3 2-2V10" />
+      <path d="M2 22l4-4" />
+    </svg>
+  )
+}

@@ -3,6 +3,7 @@ import './animations.css'
 import './config-styles.css'
 import SpotlightCard from './SpotlightCard'
 import { useConfig } from '../contexts/ConfigContext'
+import { supabase } from '../lib/supabaseClient'
 import {
   PlusIcon,
   MinusIcon,
@@ -93,176 +94,74 @@ export function AdminExpenses() {
     return () => clearTimeout(timer)
   }, [])
 
-  // Categorías predefinidas siguiendo estándares contables
-  const [categories, setCategories] = useState<ExpenseCategory[]>([
-    {
-      id: 'operativo-alimentos',
-      name: 'Alimentos & Bebidas',
-      icon: '',
-      color: 'bg-green-500',
-      gradient: 'linear-gradient(90deg, #6ee7b7 0%, #065f46 100%)',
-      type: 'operativo',
-      isEditable: false
-    },
-    {
-      id: 'operativo-combustible',
-      name: 'Gas & Combustible',
-      icon: '',
-      color: 'bg-orange-500',
-      gradient: 'linear-gradient(90deg, #fde68a 0%, #b45309 100%)',
-      type: 'operativo',
-      isEditable: false
-    },
-    {
-      id: 'fijo-alquiler',
-      name: 'Alquiler & Rentas',
-      icon: '',
-      color: 'bg-blue-500',
-      gradient: 'linear-gradient(90deg, #60a5fa 0%, #1e40af 100%)',
-      type: 'fijo',
-      isEditable: false
-    },
-    {
-      id: 'fijo-seguros',
-      name: 'Seguros & Licencias',
-      icon: '',
-      color: 'bg-purple-500',
-      gradient: 'linear-gradient(90deg, #c4b5fd 0%, #6d28d9 100%)',
-      type: 'fijo',
-      isEditable: false
-    },
-    {
-      id: 'fijo-servicios',
-      name: 'Servicios Públicos',
-      icon: '',
-      color: 'bg-yellow-500',
-      gradient: 'linear-gradient(90deg, #fde68a 0%, #b45309 100%)',
-      type: 'fijo',
-      isEditable: false
-    },
-    {
-      id: 'fijo-nomina',
-      name: 'Nómina & Salarios',
-      icon: '',
-      color: 'bg-indigo-500',
-      gradient: 'linear-gradient(90deg, #a5b4fc 0%, #4338ca 100%)',
-      type: 'fijo',
-      isEditable: false
-    },
-    {
-      id: 'imprevisto-reparaciones',
-      name: 'Reparaciones',
-      icon: '',
-      color: 'bg-red-500',
-      gradient: 'linear-gradient(90deg, #fca5a5 0%, #991b1b 100%)',
-      type: 'imprevisto',
-      isEditable: false
-    },
-    {
-      id: 'custom-marketing',
-      name: 'Marketing Digital',
-      icon: '',
-      color: 'bg-pink-500',
-      gradient: 'linear-gradient(90deg, #f9a8d4 0%, #be185d 100%)',
-      type: 'custom',
-      isEditable: true
-    }
-  ])
+  // Categorías desde base de datos (Supabase)
+  const [categories, setCategories] = useState<ExpenseCategory[]>([])
 
-  // Mock data de gastos
-  const [expenses, setExpenses] = useState<Expense[]>([
-    {
-      id: '1',
-      categoryId: 'fijo-nomina',
-      description: 'Nómina Enero 2024',
-      amount: 6500.00,
-      date: '2024-01-31',
-      type: 'recurrente',
-      status: 'pagado',
-      paymentMethod: 'transferencia',
-      recurring: {
-        frequency: 'mensual',
-        nextDue: '2024-02-29'
-      },
-      alerts: {
-        enabled: true,
-        times: ['72h', '24h']
-      }
+  // Gastos desde base de datos (Supabase)
+  const [expenses, setExpenses] = useState<Expense[]>([])
+
+  // Helpers para mapear registros de BD a los tipos locales
+  const mapDbCategory = (r: any): ExpenseCategory => ({
+    id: r.id,
+    name: r.name,
+    icon: r.icon || '',
+    color: r.color || 'bg-gray-500',
+    gradient: r.gradient || 'linear-gradient(90deg, #d1d5db 0%, #374151 100%)',
+    type: r.type,
+    isEditable: Boolean(r.is_editable ?? r.isEditable ?? false)
+  })
+
+  const parseJsonArray = (v: any): ('72h' | '24h' | '1h')[] => {
+    if (!v) return []
+    if (Array.isArray(v)) return v as any
+    try { return JSON.parse(v) as any } catch { return [] }
+  }
+
+  const mapDbExpense = (r: any): Expense => ({
+    id: String(r.id),
+    categoryId: r.category_id ?? r.categoryId,
+    description: r.description,
+    amount: Number(r.amount) || 0,
+    date: r.date,
+    type: r.type,
+    status: r.status,
+    dueDate: r.due_date ?? undefined,
+    paymentMethod: r.payment_method ?? undefined,
+    recurring: r.type === 'recurrente' ? {
+      frequency: r.recurring_frequency,
+      nextDue: r.recurring_next_due,
+      endDate: r.recurring_end_date ?? undefined
+    } : undefined,
+    alerts: {
+      enabled: Boolean(r.alerts_enabled),
+      times: parseJsonArray(r.alerts_times)
     },
-    {
-      id: '2',
-      categoryId: 'fijo-servicios',
-      description: 'Electricidad - Enero',
-      amount: 450.30,
-      date: '2024-01-15',
-      type: 'recurrente',
-      status: 'pendiente',
-      dueDate: '2024-02-15',
-      paymentMethod: 'transferencia',
-      recurring: {
-        frequency: 'mensual',
-        nextDue: '2024-02-15'
-      },
-      alerts: {
-        enabled: true,
-        times: ['72h', '24h', '1h']
-      }
-    },
-    {
-      id: '3',
-      categoryId: 'operativo-alimentos',
-      description: 'Compra semanal de ingredientes',
-      amount: 1200.80,
-      date: '2024-01-28',
-      type: 'unico',
-      status: 'pagado',
-      paymentMethod: 'efectivo'
-    },
-    {
-      id: '4',
-      categoryId: 'fijo-alquiler',
-      description: 'Alquiler local principal',
-      amount: 2800.00,
-      date: '2024-01-01',
-      type: 'recurrente',
-      status: 'pendiente',
-      dueDate: '2024-02-01',
-      paymentMethod: 'transferencia',
-      recurring: {
-        frequency: 'mensual',
-        nextDue: '2024-02-01'
-      },
-      alerts: {
-        enabled: true,
-        times: ['72h', '24h']
-      }
-    },
-    {
-      id: '5',
-      categoryId: 'imprevisto-reparaciones',
-      description: 'Reparación sistema de refrigeración',
-      amount: 850.00,
-      date: '2024-01-25',
-      type: 'unico',
-      status: 'vencido',
-      dueDate: '2024-01-27',
-      paymentMethod: 'tarjeta'
-    },
-    {
-      id: '6',
-      categoryId: 'custom-marketing',
-      description: 'Campaña publicitaria redes sociales',
-      amount: 280.00,
-      date: '2024-01-20',
-      type: 'recurrente',
-      status: 'programado',
-      dueDate: '2024-02-20',
-      recurring: {
-        frequency: 'mensual',
-        nextDue: '2024-02-20'
+    receipt: r.receipt ?? undefined,
+    notes: r.notes ?? undefined,
+    employee: r.employee ?? undefined
+  })
+
+  // Cargar datos desde Supabase
+  useEffect(() => {
+    async function loadExpensesAndCategories() {
+      try {
+        setIsLoading(true)
+        const [{ data: catRows, error: catErr }, { data: expRows, error: expErr }] = await Promise.all([
+          supabase.from('expense_categories').select('*').order('name', { ascending: true }),
+          supabase.from('expenses').select('*').order('date', { ascending: false }).limit(1000)
+        ])
+        if (catErr) console.error('Error loading categories:', catErr)
+        if (expErr) console.error('Error loading expenses:', expErr)
+        setCategories((catRows || []).map(mapDbCategory))
+        setExpenses((expRows || []).map(mapDbExpense))
+      } catch (e) {
+        console.error('Load expenses/categories error:', e)
+      } finally {
+        setIsLoading(false)
       }
     }
-  ])
+    loadExpensesAndCategories()
+  }, [])
 
   // Nuevo estado para formulario de 3 pasos
   const [newExpense, setNewExpense] = useState<Partial<Expense>>({
@@ -365,38 +264,65 @@ export function AdminExpenses() {
   const upcomingAlerts = getUpcomingAlerts()
 
   // Función para agregar nuevo gasto (Step 3)
-  const handleAddExpense = () => {
+  const handleAddExpense = async () => {
     if (newExpense.description && newExpense.amount && newExpense.categoryId) {
-      const expense: Expense = {
-        id: Date.now().toString(),
-        categoryId: newExpense.categoryId!,
-        description: newExpense.description,
-        amount: newExpense.amount,
-        date: newExpense.date || new Date().toISOString().split('T')[0],
-        type: newExpense.type as any,
-        status: newExpense.status as any,
-        paymentMethod: newExpense.paymentMethod,
-        dueDate: newExpense.dueDate,
-        recurring: newExpense.recurring,
-        alerts: newExpense.alerts,
-        notes: newExpense.notes
+      try {
+        const payload: any = {
+          id: (globalThis as any).crypto?.randomUUID?.() || String(Date.now()),
+          category_id: newExpense.categoryId,
+          description: newExpense.description,
+          amount: newExpense.amount,
+          date: newExpense.date || new Date().toISOString().split('T')[0],
+          type: newExpense.type,
+          status: newExpense.status,
+          payment_method: newExpense.paymentMethod,
+          due_date: newExpense.dueDate || null,
+          recurring_frequency: newExpense.type === 'recurrente' ? newExpense.recurring?.frequency || null : null,
+          recurring_next_due: newExpense.type === 'recurrente' ? newExpense.recurring?.nextDue || null : null,
+          recurring_end_date: newExpense.type === 'recurrente' ? newExpense.recurring?.endDate || null : null,
+          alerts_enabled: Boolean(newExpense.alerts?.enabled),
+          alerts_times: (newExpense.alerts?.times || []) as any,
+          notes: newExpense.notes || null
+        }
+        const { data, error } = await supabase
+          .from('expenses')
+          .insert([payload])
+          .select('*')
+          .single()
+        if (error) {
+          console.error('Insert expense error:', error)
+          alert('No se pudo guardar el gasto. Revisa permisos/estructura de la tabla.')
+          return
+        }
+        const created = mapDbExpense(data)
+        setExpenses([created, ...expenses])
+        setNewExpense({
+          type: 'unico',
+          status: 'pendiente',
+          date: new Date().toISOString().split('T')[0],
+          paymentMethod: 'tarjeta',
+          alerts: { enabled: false, times: ['24h'] }
+        })
+        setIsAddExpenseOpen(false)
+        setCurrentStep(1)
+      } catch (e) {
+        console.error('handleAddExpense error:', e)
       }
-      setExpenses([expense, ...expenses])
-      setNewExpense({
-        type: 'unico',
-        status: 'pendiente',
-        date: new Date().toISOString().split('T')[0],
-        paymentMethod: 'tarjeta',
-        alerts: { enabled: false, times: ['24h'] }
-      })
-      setIsAddExpenseOpen(false)
-      setCurrentStep(1)
     }
   }
 
   // Función para eliminar gasto
-  const handleDeleteExpense = (id: string) => {
-    setExpenses(expenses.filter(e => e.id !== id))
+  const handleDeleteExpense = async (id: string) => {
+    try {
+      const { error } = await supabase.from('expenses').delete().eq('id', id)
+      if (error) {
+        console.error('Delete expense error:', error)
+        return
+      }
+      setExpenses(expenses.filter(e => e.id !== id))
+    } catch (e) {
+      console.error('handleDeleteExpense error:', e)
+    }
   }
 
   // Filtrar gastos
@@ -1256,22 +1182,36 @@ export function AdminExpenses() {
                 </div>
                 <div className="mt-6 flex justify-end">
                   <button
-                    onClick={() => {
+                    onClick={async () => {
                       if (newCategory.name.trim()) {
-                        setCategories(([
-                          ...categories,
-                          {
-                            id: `custom-${Date.now()}`,
+                        try {
+                          const payload: any = {
+                            id: `custom-${crypto.randomUUID?.() || Date.now()}`,
                             name: newCategory.name,
                             icon: '',
                             color: 'bg-gray-500',
                             gradient: 'linear-gradient(90deg, #d1d5db 0%, #374151 100%)',
-                            type: newCategory.type as 'operativo' | 'fijo' | 'imprevisto' | 'custom',
-                            isEditable: true
+                            type: newCategory.type,
+                            is_editable: true
                           }
-                        ]) as ExpenseCategory[]);
-                        setIsAddCategoryOpen(false);
-                        setNewCategory({ name: '', type: 'operativo' });
+                          const { data, error } = await supabase
+                            .from('expense_categories')
+                            .insert([payload])
+                            .select('*')
+                            .single()
+                          if (error) {
+                            console.error('Insert category error:', error)
+                            alert('No se pudo crear la categoría. Revisa permisos/estructura de la tabla.')
+                            return
+                          }
+                          const created = mapDbCategory(data)
+                          setCategories(([...categories, created]) as ExpenseCategory[])
+                          setIsAddCategoryOpen(false)
+                          setNewCategory({ name: '', type: 'operativo' })
+                        } catch (e) {
+                          console.error('Create category error:', e)
+                          alert('Error inesperado al crear la categoría.')
+                        }
                       }
                     }}
                     className="px-5 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors duration-200 text-xs font-semibold"
@@ -1326,14 +1266,25 @@ export function AdminExpenses() {
                 </div>
                 <div className="mt-6 flex justify-end">
                   <button
-                    onClick={() => {
-                      if (editCategoryData.name.trim()) {
-                        setCategories(categories.map(cat =>
-                          cat.id === editCategory.id
-                            ? { ...cat, name: editCategoryData.name, type: editCategoryData.type }
-                            : cat
-                        ) as ExpenseCategory[]);
-                        setEditCategory(null);
+                    onClick={async () => {
+                      if (editCategory && editCategoryData.name.trim()) {
+                        try {
+                          const { data, error } = await supabase
+                            .from('expense_categories')
+                            .update({ name: editCategoryData.name, type: editCategoryData.type })
+                            .eq('id', editCategory.id)
+                            .select('*')
+                            .single()
+                          if (error) {
+                            console.error('Update category error:', error)
+                            return
+                          }
+                          const updated = mapDbCategory(data)
+                          setCategories(categories.map(cat => cat.id === updated.id ? updated : cat) as ExpenseCategory[])
+                          setEditCategory(null)
+                        } catch (e) {
+                          console.error('Edit category error:', e)
+                        }
                       }
                     }}
                     className="px-5 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors duration-200 text-xs font-semibold"

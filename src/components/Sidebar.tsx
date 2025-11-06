@@ -14,7 +14,8 @@ import {
   LogOutIcon,
   HistoryIcon,
   ShoppingCartIcon,
-  FileTextIcon
+  FileTextIcon,
+  HammerIcon
 } from './icons'
 
 interface SidebarProps {
@@ -86,6 +87,15 @@ export function Sidebar({ className = '', onNavigate, currentPage = 'dashboard' 
       onClick: () => {
         setActiveItem('quotes')
         onNavigate?.('quotes')
+      }
+    },
+    {
+      id: 'production-orders',
+      title: 'Órdenes de producción',
+      icon: <HammerIcon size={20} />,
+      onClick: () => {
+        setActiveItem('production-orders')
+        onNavigate?.('production-orders')
       }
     },
     {

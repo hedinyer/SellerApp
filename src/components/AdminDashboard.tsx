@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import './animations.css'
 import './config-styles.css'
 import SpotlightCard from './SpotlightCard'
@@ -14,6 +14,7 @@ import {
   DollarSignIcon
 } from './icons'
 import { LineChart, Line, ResponsiveContainer, Area, CartesianGrid, YAxis, XAxis } from 'recharts';
+import { supabase } from '../lib/supabaseClient'
 
 interface SalesData {
   today: number
@@ -31,6 +32,8 @@ interface EmployeeStats {
   avgServiceTime: string
   rating: number
   sales: number
+  itemsSold?: number
+  avgTicket?: number
 }
 
 interface DishStats {
@@ -88,96 +91,170 @@ const AnimatedDot = ({ cx, cy, index, data, color }: { cx: number, cy: number, i
 export function AdminDashboard() {
   const [isLoading, setIsLoading] = useState(true)
   const { formatCurrency, getFontSizeClass } = useConfig()
+  const [salesData, setSalesData] = useState<SalesData>({ today: 0, week: 0, month: 0, year: 0 })
+  const [customerStats, setCustomerStats] = useState<CustomerStats>({ totalToday: 0, totalWeek: 0, totalMonth: 0, avgTableTime: '-', returnRate: 0, satisfaction: 0 })
+  const [employeeStats, setEmployeeStats] = useState<EmployeeStats[]>([])
+  const [topDishes, setTopDishes] = useState<DishStats[]>([])
+  const [leastPopularDishes, setLeastPopularDishes] = useState<DishStats[]>([])
 
   useEffect(() => {
     const timer = setTimeout(() => setIsLoading(false), 300)
     return () => clearTimeout(timer)
   }, [])
 
-  // Mock data - En producción vendría de tu API
-  const salesData: SalesData = {
-    today: 2847.60,
-    week: 18456.80,
-    month: 78234.50,
-    year: 892456.75
-  }
+  useEffect(() => {
+    async function loadDashboard() {
+      setIsLoading(true)
+      try {
+        const now = new Date()
+        const startOfToday = new Date(now); startOfToday.setHours(0,0,0,0)
+        const startOfWeek = new Date(startOfToday); startOfWeek.setDate(startOfToday.getDate() - 6)
+        const startOfMonth = new Date(startOfToday); startOfMonth.setDate(1)
+        const startOfYear = new Date(startOfToday); startOfYear.setMonth(0,1)
 
-  const customerStats: CustomerStats = {
-    totalToday: 127,
-    totalWeek: 834,
-    totalMonth: 3456,
-    avgTableTime: "1h 23m",
-    returnRate: 68,
-    satisfaction: 4.7
-  }
+        // Pull recent window for computations (last 60 days)
+        const since60d = new Date(startOfToday); since60d.setDate(startOfToday.getDate() - 60)
 
-  const employeeStats: EmployeeStats[] = [
-    {
-      id: '1',
-      name: 'Carlos Martínez',
-      role: 'Mesero Senior',
-      servicesCount: 23,
-      totalTips: 145.50,
-      avgServiceTime: '18m',
-      rating: 4.8,
-      sales: 1234.50
-    },
-    {
-      id: '2',
-      name: 'Ana López',
-      role: 'Mesera',
-      servicesCount: 19,
-      totalTips: 98.20,
-      avgServiceTime: '22m',
-      rating: 4.6,
-      sales: 987.30
-    },
-    {
-      id: '3',
-      name: 'Miguel Rodríguez',
-      role: 'Mesero',
-      servicesCount: 21,
-      totalTips: 134.80,
-      avgServiceTime: '20m',
-      rating: 4.7,
-      sales: 1156.20
-    },
-    {
-      id: '4',
-      name: 'Laura Santos',
-      role: 'Supervisora',
-      servicesCount: 15,
-      totalTips: 189.50,
-      avgServiceTime: '16m',
-      rating: 4.9,
-      sales: 1567.80
-    },
-    {
-      id: '5',
-      name: 'David Pérez',
-      role: 'Mesero',
-      servicesCount: 18,
-      totalTips: 112.40,
-      avgServiceTime: '24m',
-      rating: 4.5,
-      sales: 876.90
+        const { data: salesRows } = await supabase
+          .from('sales')
+          .select('id, created_at, subtotal, discount, total, items, payments, customer, seller')
+          .gte('created_at', since60d.toISOString())
+          .order('created_at', { ascending: false })
+          .limit(5000)
+
+        const rows = (salesRows || []) as any[]
+
+        // Normalize JSON fields that may arrive as strings
+        const parsed = rows.map(r => {
+          const parseJson = (v: any) => {
+            if (!v) return undefined
+            try { return typeof v === 'string' ? JSON.parse(v) : v } catch { return undefined }
+          }
+          return {
+            id: r.id as string,
+            created_at: r.created_at as string,
+            subtotal: Number(r.subtotal) || 0,
+            discount: Number(r.discount) || 0,
+            total: Number(r.total) || 0,
+            items: (parseJson(r.items) as any[]) || [],
+            payments: (parseJson(r.payments) as any[]) || [],
+            customer: parseJson(r.customer) as any | undefined,
+            seller: r.seller as string | undefined
+          }
+        })
+
+        // Sales summary
+        const sumInRange = (from: Date) => parsed
+          .filter(s => new Date(s.created_at) >= from)
+          .reduce((acc, s) => acc + s.total, 0)
+
+        setSalesData({
+          today: sumInRange(startOfToday),
+          week: sumInRange(startOfWeek),
+          month: sumInRange(startOfMonth),
+          year: sumInRange(startOfYear)
+        })
+
+        // Customer stats (using sales count as proxy of comensales)
+        const countInRange = (from: Date) => parsed.filter(s => new Date(s.created_at) >= from).length
+        setCustomerStats({
+          totalToday: countInRange(startOfToday),
+          totalWeek: countInRange(startOfWeek),
+          totalMonth: countInRange(startOfMonth),
+          avgTableTime: '-',
+          returnRate: 0,
+          satisfaction: 0
+        })
+
+        // Per-seller today
+        const bySeller = new Map<string, { servicesCount: number, total: number, items: number }>()
+        parsed.filter(s => new Date(s.created_at) >= startOfToday).forEach(s => {
+          const key = s.seller || 'Sin vendedor'
+          const curr = bySeller.get(key) || { servicesCount: 0, total: 0, items: 0 }
+          curr.servicesCount += 1
+          curr.total += s.total
+          try {
+            const sumItems = (s.items || []).reduce((n: number, it: any) => n + (Number(it.quantity) || 0), 0)
+            curr.items += sumItems
+          } catch {}
+          bySeller.set(key, curr)
+        })
+        const sellerStats: EmployeeStats[] = Array.from(bySeller.entries()).map(([seller, v], i) => ({
+          id: String(i+1),
+          name: seller,
+          role: 'Vendedor',
+          servicesCount: v.servicesCount,
+          totalTips: 0,
+          avgServiceTime: '-',
+          rating: 4.7,
+          sales: Number(v.total),
+          itemsSold: Number(v.items),
+          avgTicket: v.servicesCount > 0 ? Number(v.total) / v.servicesCount : 0
+        }))
+        setEmployeeStats(sellerStats)
+
+        // Aggregate items sold today for top/least dishes
+        const aggByKey = new Map<string, { name: string, sku?: string, quantity: number, revenue: number }>()
+        parsed.filter(s => new Date(s.created_at) >= startOfMonth).forEach(s => {
+          (s.items || []).forEach((it: any) => {
+            const sku = it.sku as string | undefined
+            const name = (it.name as string) || sku || 'Producto'
+            const key = sku || name
+            const curr = aggByKey.get(key) || { name, sku, quantity: 0, revenue: 0 }
+            const qty = Number(it.quantity) || 0
+            const price = Number(it.unitPrice) || 0
+            curr.quantity += qty
+            curr.revenue += qty * price
+            aggByKey.set(key, curr)
+          })
+        })
+
+        // Fetch minimal garments meta by sku for category
+        let metaBySku = new Map<string, { category?: string }>()
+        try {
+          const skus = Array.from(aggByKey.values()).map(v => v.sku).filter(Boolean) as string[]
+          if (skus.length) {
+            const { data: garments } = await supabase
+              .from('garments')
+              .select('sku, category')
+              .in('sku', Array.from(new Set(skus)))
+            if (garments) {
+              metaBySku = new Map((garments as any[]).map(g => [g.sku as string, { category: g.category as string | undefined }]))
+            }
+          }
+        } catch {}
+
+        const dishes = Array.from(aggByKey.values()).map(v => ({
+          name: v.name,
+          orders: v.quantity,
+          revenue: Number(v.revenue),
+          category: (v.sku && metaBySku.get(v.sku)?.category) || 'General',
+          trend: 'stable' as const
+        }))
+
+        // Ordenar por más vendidos (desc)
+        const sorted = dishes
+          .filter(d => d.orders > 0)
+          .sort((a,b) => b.orders - a.orders)
+
+        // Top N sin repetir
+        const TOP_N = 5
+        const BOTTOM_N = 4
+        const top = sorted.slice(0, TOP_N)
+        const topNames = new Set(top.map(d => d.name))
+
+        // Oportunidades: menos vendidos, excluyendo los top
+        const bottomCandidates = [...sorted].reverse().filter(d => !topNames.has(d.name))
+        const bottom = bottomCandidates.slice(0, BOTTOM_N)
+
+        setTopDishes(top)
+        setLeastPopularDishes(bottom)
+      } finally {
+        setIsLoading(false)
+      }
     }
-  ]
-
-  const topDishes: DishStats[] = [
-    { name: 'Paella Valenciana', orders: 34, revenue: 982.60, category: 'Principales', trend: 'up' },
-    { name: 'Jamón Ibérico', orders: 28, revenue: 977.20, category: 'Entrantes', trend: 'up' },
-    { name: 'Chuletón Ibérico', orders: 19, revenue: 872.10, category: 'Principales', trend: 'stable' },
-    { name: 'Lubina a la Sal', orders: 16, revenue: 686.40, category: 'Principales', trend: 'up' },
-    { name: 'Crema Catalana', orders: 25, revenue: 322.50, category: 'Postres', trend: 'down' }
-  ]
-
-  const leastPopularDishes: DishStats[] = [
-    { name: 'Gazpacho', orders: 3, revenue: 29.70, category: 'Entrantes', trend: 'down' },
-    { name: 'Agua Mineral', orders: 8, revenue: 36.00, category: 'Bebidas', trend: 'stable' },
-    { name: 'Flan Casero', orders: 5, revenue: 44.50, category: 'Postres', trend: 'down' },
-    { name: 'Ensalada César', orders: 4, revenue: 67.60, category: 'Entrantes', trend: 'down' }
-  ]
+    loadDashboard()
+  }, [])
 
   const getTrendIcon = (trend: string) => {
     switch (trend) {
@@ -195,34 +272,39 @@ export function AdminDashboard() {
     }
   }
 
-  // More varied and visually clear data for mini charts
-  const chartDataComensales = [
-    { v: 80 }, { v: 140 }, { v: 100 }, { v: 160 }, { v: 110 }, { v: 127 }, { v: 90 }
-  ];
-  // For avgTableTime, simulate minutes as numbers (e.g., 70 = 1h10m)
-  const chartDataTableTime = [
-    { v: 60 }, { v: 90 }, { v: 70 }, { v: 110 }, { v: 65 }, { v: 83 }, { v: 75 }
-  ];
-  const chartDataReturnRate = [
-    { v: 55 }, { v: 75 }, { v: 60 }, { v: 80 }, { v: 62 }, { v: 68 }, { v: 58 }
-  ];
-  const chartDataSatisfaction = [
-    { v: 3.8 }, { v: 4.9 }, { v: 4.2 }, { v: 4.8 }, { v: 4.1 }, { v: 4.7 }, { v: 4.3 }
-  ];
+  // Chart data derived from available KPIs (keep simple placeholders based on totals)
+  const chartDataComensales = useMemo(() => {
+    const base = customerStats.totalToday || 0
+    return [0.6, 0.8, 0.7, 0.9, 0.75, 0.85, 1].map(p => ({ v: Math.max(0, Math.round(base * p)) }))
+  }, [customerStats.totalToday])
+  const chartDataTableTime = [{ v: 60 }, { v: 70 }, { v: 65 }, { v: 75 }, { v: 68 }, { v: 72 }, { v: 71 }]
+  const chartDataReturnRate = [{ v: 40 }, { v: 45 }, { v: 50 }, { v: 55 }, { v: 52 }, { v: 57 }, { v: 58 }]
+  const chartDataSatisfaction = [{ v: 4.1 }, { v: 4.2 }, { v: 4.3 }, { v: 4.2 }, { v: 4.4 }, { v: 4.3 }, { v: 4.4 }]
 
-  // Simulated data for sales summary mini charts
-  const chartDataSalesToday = [
-    { v: 1800 }, { v: 2200 }, { v: 2100 }, { v: 2500 }, { v: 2847 }, { v: 2600 }, { v: 2847 }
-  ];
-  const chartDataSalesWeek = [
-    { v: 12000 }, { v: 15000 }, { v: 17000 }, { v: 14000 }, { v: 18456 }, { v: 16000 }, { v: 18456 }
-  ];
-  const chartDataSalesMonth = [
-    { v: 60000 }, { v: 70000 }, { v: 75000 }, { v: 72000 }, { v: 78234 }, { v: 76000 }, { v: 78234 }
-  ];
-  const chartDataSalesYear = [
-    { v: 700000 }, { v: 800000 }, { v: 850000 }, { v: 870000 }, { v: 892456 }, { v: 880000 }, { v: 892456 }
-  ];
+  const chartDataSalesToday = useMemo(() => {
+    const v = Math.round(salesData.today)
+    return [0.6, 0.7, 0.65, 0.75, 0.8, 0.7, 1].map(p => ({ v: Math.round(v * p) }))
+  }, [salesData.today])
+  const chartDataSalesWeek = useMemo(() => {
+    const v = Math.round(salesData.week)
+    return [0.6, 0.75, 0.8, 0.7, 1, 0.85, 1].map(p => ({ v: Math.round(v * p) }))
+  }, [salesData.week])
+  const chartDataSalesMonth = useMemo(() => {
+    const v = Math.round(salesData.month)
+    return [0.7, 0.8, 0.85, 0.82, 1, 0.97, 1].map(p => ({ v: Math.round(v * p) }))
+  }, [salesData.month])
+  const chartDataSalesYear = useMemo(() => {
+    const v = Math.round(salesData.year)
+    return [0.78, 0.86, 0.9, 0.95, 1, 0.98, 1].map(p => ({ v: Math.round(v * p) }))
+  }, [salesData.year])
+  const averageTicketToday = useMemo(() => {
+    const count = Math.max(1, customerStats.totalToday || 0)
+    return (salesData.today || 0) / count
+  }, [salesData.today, customerStats.totalToday])
+  const chartDataAvgTicketToday = useMemo(() => {
+    const v = Math.round(averageTicketToday)
+    return [0.7, 0.8, 0.75, 0.85, 0.9, 0.82, 1].map(p => ({ v: Math.max(0, Math.round(v * p)) }))
+  }, [averageTicketToday])
 
   // Etiquetas para los ejes X de los charts de ventas
   const daysLabels = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
@@ -348,115 +430,7 @@ export function AdminDashboard() {
           </div>
         </div>
 
-              {/* Estadísticas de Comensales */}
-        <div
-          className="relative rounded-[16px] border border-gray-200 shadow-sm mb-8 lg:mb-10 p-4 lg:p-6 overflow-hidden bg-white"
-        >
-          <div className="relative z-10">
-            <div className="mb-4">
-              <h2 className="text-lg lg:text-xl font-bold text-gray-900">Estadísticas de Comensales</h2>
-              <p className="text-xs lg:text-sm text-gray-600 font-normal mt-1">Visión general de la clientela y su experiencia</p>
-            </div>
-            <div className="grid grid-cols-2 lg:flex lg:justify-center gap-3 lg:gap-4">
-          <div className="w-full lg:w-64">
-            <SpotlightCard spotlightColor="rgba(0, 0, 0, 0.08)">
-              <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-between config-font-medium metallic-bg" style={{ animationDelay: '0ms', boxShadow: '0 4px 16px 0 rgba(6,182,212,0.15)' }}>
-                <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                <div className="flex flex-col justify-between h-full relative z-10">
-                  <div className="flex flex-col items-center justify-center pt-1 pb-2">
-                    <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">Hoy</h3>
-                    <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{customerStats.totalToday}</p>
-                    <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">Comensales</p>
-                    </div>
-                  <div className="w-full px-2 h-10 xl:h-12 flex items-end">
-                    <ResponsiveContainer width="100%" height={48}>
-                      <LineChart data={chartDataComensales.map((d, i) => ({ ...d, label: daysLabels[i] }))} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
-                        <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
-                        <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                        <YAxis hide />
-                        <Line type="monotone" dataKey="v" stroke="#34d399" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                  </div>
-                </div>
-              </SpotlightCard>
-            </div>
-          <div className="w-full lg:w-64">
-            <SpotlightCard spotlightColor="rgba(0, 0, 0, 0.08)">
-              <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-between config-font-medium metallic-bg" style={{ animationDelay: '100ms', boxShadow: '0 4px 16px 0 rgba(20,184,166,0.15)' }}>
-                <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                <div className="flex flex-col justify-between h-full relative z-10">
-                  <div className="flex flex-col items-center justify-center pt-1 pb-2">
-                    <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">Tiempo Mesa</h3>
-                    <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{customerStats.avgTableTime}</p>
-                    <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">Promedio</p>
-                    </div>
-                  <div className="w-full px-2 h-10 xl:h-12 flex items-end">
-                    <ResponsiveContainer width="100%" height={48}>
-                      <LineChart data={chartDataTableTime.map((d, i) => ({ ...d, label: daysLabels[i] }))} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
-                        <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
-                        <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                        <YAxis hide />
-                        <Line type="monotone" dataKey="v" stroke="#06b6d4" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                  </div>
-                </div>
-              </SpotlightCard>
-            </div>
-          <div className="w-full lg:w-64">
-            <SpotlightCard spotlightColor="rgba(0, 0, 0, 0.08)">
-              <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-between config-font-medium metallic-bg" style={{ animationDelay: '200ms', boxShadow: '0 4px 16px 0 rgba(16,185,129,0.15)' }}>
-                <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                <div className="flex flex-col justify-between h-full relative z-10">
-                  <div className="flex flex-col items-center justify-center pt-1 pb-2">
-                    <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">Clientes Fieles</h3>
-                    <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{customerStats.returnRate}%</p>
-                    <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">Retorno</p>
-                    </div>
-                  <div className="w-full px-2 h-10 xl:h-12 flex items-end">
-                    <ResponsiveContainer width="100%" height={48}>
-                      <LineChart data={chartDataReturnRate.map((d, i) => ({ ...d, label: daysLabels[i] }))} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
-                        <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
-                        <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                        <YAxis hide />
-                        <Line type="monotone" dataKey="v" stroke="#10b981" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                  </div>
-                </div>
-              </SpotlightCard>
-            </div>
-          <div className="w-full lg:w-64">
-            <SpotlightCard spotlightColor="rgba(0, 0, 0, 0.08)">
-              <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-between config-font-medium metallic-bg" style={{ animationDelay: '300ms', boxShadow: '0 4px 16px 0 rgba(253,224,71,0.15)' }}>
-                <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                <div className="flex flex-col justify-between h-full relative z-10">
-                  <div className="flex flex-col items-center justify-center pt-1 pb-2">
-                    <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">Satisfacción</h3>
-                    <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{customerStats.satisfaction}/5</p>
-                    <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">Calificación</p>
-                          </div>
-                  <div className="w-full px-2 h-10 xl:h-12 flex items-end">
-                    <ResponsiveContainer width="100%" height={48}>
-                      <LineChart data={chartDataSatisfaction.map((d, i) => ({ ...d, label: daysLabels[i] }))} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
-                        <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
-                        <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                        <YAxis hide />
-                        <Line type="monotone" dataKey="v" stroke="#f59e42" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              </div>
-            </SpotlightCard>
-              </div>
-            </div>
-          </div>
-        </div>
+        
 
         {/* Resumen del Personal - Nuevo Diseño */}
         <div
@@ -496,21 +470,21 @@ export function AdminDashboard() {
                   </div>
                 </SpotlightCard>
               </div>
-              {/* Total Propinas */}
+              {/* Ticket Promedio Hoy */}
               <div className="w-full">
                 <SpotlightCard spotlightColor={'rgba(16,185,129,0.08)' as `rgba(${number}, ${number}, ${number}, ${number})`}>
                   <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-between metallic-bg" style={{ animationDelay: '100ms', boxShadow: '0 4px 16px 0 rgba(16,185,129,0.15)' }}>
                     <div className="absolute inset-0 pointer-events-none metallic-shine" />
                     <div className="flex flex-col justify-between h-full relative z-10">
                       <div className="flex flex-col items-center justify-center pt-1 pb-2">
-                        <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">Total Propinas</h3>
-                        <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{formatCurrency(employeeStats.reduce((sum, emp) => sum + emp.totalTips, 0))}</p>
-                        <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">Propinas del día</p>
+                        <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">Ticket Promedio</h3>
+                        <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{formatCurrency(averageTicketToday)}</p>
+                        <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">Hoy</p>
                       </div>
-                      {/* Mini chart: simulate tips per hour */}
+                      {/* Mini chart: promedio del día */}
                       <div className="w-full px-2 h-10 xl:h-12 flex items-end">
                         <ResponsiveContainer width="100%" height={48}>
-                          <LineChart data={[{v:10},{v:15},{v:12},{v:18},{v:14},{v:20},{v:17}].map((d, i) => ({ ...d, label: daysLabels[i] }))}
+                          <LineChart data={chartDataAvgTicketToday.map((d, i) => ({ ...d, label: daysLabels[i] }))}
                             margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
                             <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
                             <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
@@ -518,9 +492,9 @@ export function AdminDashboard() {
                             <Line type="monotone" dataKey="v" stroke="#10b981" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
                           </LineChart>
                         </ResponsiveContainer>
-              </div>
-            </div>
-          </div>
+                      </div>
+                    </div>
+                  </div>
                 </SpotlightCard>
               </div>
               {/* Ventas Generadas */}
@@ -562,7 +536,7 @@ export function AdminDashboard() {
               <div className="flex items-center justify-center">
                 <h3 className="text-sm font-medium text-gray-800 text-center">Rendimiento Empleados</h3>
               </div>
-              <p className="text-xs text-gray-600 mt-1 text-center">Servicios y propinas del día</p>
+              
             </div>
             <div className="p-4 h-[400px] overflow-y-auto kitchen-scrollbar">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -589,8 +563,8 @@ export function AdminDashboard() {
                               <p className="text-[11px] text-gray-500 leading-tight">{employee.role}</p>
                             </div>
                             <div className="flex items-center gap-1 mt-0.5 md:mt-0">
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-800 text-[11px] font-medium"><StarIcon size={11} className="mr-1" />{employee.rating}</span>
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-green-100 text-green-800 text-[11px] font-medium">{formatCurrency(employee.totalTips)}</span>
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[11px] font-medium">Ticket: {formatCurrency(employee.avgTicket || 0)}</span>
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 text-[11px] font-medium">Items: {employee.itemsSold || 0}</span>
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 text-[11px] font-medium">{formatCurrency(employee.sales)}</span>
                             </div>
                       </div>
@@ -614,27 +588,27 @@ export function AdminDashboard() {
                             </LineChart>
                           </ResponsiveContainer>
                         </div>
-                        {/* Propinas */}
+                        {/* Ticket Promedio */}
                         <div className="flex-1 min-w-0">
-                          <div className="text-[10px] text-gray-500 text-center mb-0.5">Propinas ($)</div>
+                          <div className="text-[10px] text-gray-500 text-center mb-0.5">Ticket Promedio</div>
                           <ResponsiveContainer width="100%" height={48}>
-                            <LineChart data={performanceData} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
+                            <LineChart data={performanceData.map(d => ({ ...d, ticket: (employee.avgTicket || 0) * (0.9 + Math.random()*0.2) }))} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
                               <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
                               <XAxis dataKey="day" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} label={{ value: 'Día', position: 'insideBottom', offset: -2, fontSize: 9 }} />
                               <YAxis hide />
-                              <Line type="monotone" dataKey="propinas" stroke="#10b981" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
+                              <Line type="monotone" dataKey="ticket" stroke="#10b981" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
                             </LineChart>
                           </ResponsiveContainer>
                       </div>
-                        {/* Puntuación */}
+                        {/* Items Vendidos */}
                         <div className="flex-1 min-w-0">
-                          <div className="text-[10px] text-gray-500 text-center mb-0.5">Puntuación</div>
+                          <div className="text-[10px] text-gray-500 text-center mb-0.5">Items Vendidos</div>
                           <ResponsiveContainer width="100%" height={48}>
-                            <LineChart data={performanceData.map((d, i) => ({ ...d, puntuacion: employee.rating + (Math.random() - 0.5) * 0.2 }))} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
+                            <LineChart data={performanceData.map(d => ({ ...d, items: Math.max(0, Math.round((employee.itemsSold || 0)/7 * (0.8 + Math.random()*0.4))) }))} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
                               <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
                               <XAxis dataKey="day" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} label={{ value: 'Día', position: 'insideBottom', offset: -2, fontSize: 9 }} />
-                              <YAxis hide domain={[4, 5]} />
-                              <Line type="monotone" dataKey="puntuacion" stroke="#f59e42" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
+                              <YAxis hide />
+                              <Line type="monotone" dataKey="items" stroke="#f59e42" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
                             </LineChart>
                           </ResponsiveContainer>
                       </div>
@@ -650,9 +624,9 @@ export function AdminDashboard() {
           <div className="bg-white rounded-[8px] border border-gray-200 shadow-sm animate-slideInUp" style={{ animationDelay: '700ms' }}>
             <div className="p-4 border-b border-gray-100">
               <div className="flex items-center justify-center">
-                <h3 className="text-sm font-medium text-gray-800 text-center">Platos Favoritos</h3>
+                <h3 className="text-sm font-medium text-gray-800 text-center">Productos Más Vendidos</h3>
               </div>
-              <p className="text-xs text-gray-600 mt-1 text-center">Los más pedidos hoy</p>
+              <p className="text-xs text-gray-600 mt-1 text-center">Más vendidos del mes</p>
             </div>
             <div className="p-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -696,7 +670,7 @@ export function AdminDashboard() {
               <div className="flex items-center justify-center">
                 <h3 className="text-sm font-medium text-gray-800 text-center">Oportunidades</h3>
               </div>
-              <p className="text-xs text-gray-600 mt-1 text-center">Platos con menor demanda</p>
+              <p className="text-xs text-gray-600 mt-1 text-center">Productos con menor demanda</p>
             </div>
             <div className="p-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -721,7 +695,7 @@ export function AdminDashboard() {
               </div>
               <div className="mt-4 p-3 bg-orange-50 rounded border border-orange-100">
                 <p className="text-xs text-orange-700">
-                  💡 <strong>Sugerencia:</strong> Considera promociones especiales o revisar recetas para estos platos.
+                  💡 <strong>Sugerencia:</strong> Considera promociones especiales.
                 </p>
               </div>
             </div>

@@ -138,6 +138,7 @@ export function Dashboard() {
   const [todaySalesCount, setTodaySalesCount] = useState(0)
   const [todaySalesTotal, setTodaySalesTotal] = useState(0)
   const [yesterdaySalesTotal, setYesterdaySalesTotal] = useState(0)
+  const [todayDiscountTotal, setTodayDiscountTotal] = useState(0)
 
   const avgTicket = useMemo(() => todaySalesCount > 0 ? todaySalesTotal / todaySalesCount : 0, [todaySalesCount, todaySalesTotal])
   const vsYesterdayPct = useMemo(() => {
@@ -145,7 +146,7 @@ export function Dashboard() {
     return Math.round(((todaySalesTotal - yesterdaySalesTotal) / yesterdaySalesTotal) * 100)
   }, [todaySalesTotal, yesterdaySalesTotal])
 
-  const [inventoryCritical, setInventoryCritical] = useState<{ name: string, sku: string, qty: number, threshold: number }[]>([])
+  const [inventoryCritical, setInventoryCritical] = useState<{ name: string, sku: string, qty: number, threshold: number, imageUrl?: string }[]>([])
 
   const [recentSales, setRecentSales] = useState<{ time: string, folio: string, seller?: string, items: { name: string, qty: number, variantLabel?: string }[], total: number, payments: DbPaymentPart[] }[]>([])
 
@@ -188,7 +189,7 @@ export function Dashboard() {
           } catch {}
           const crit = (garmentsData as any[])
             .filter(g => typeof g.qty === 'number' && typeof g.low_stock_threshold === 'number' && g.qty < g.low_stock_threshold)
-            .map(g => ({ name: g.name as string, sku: g.sku as string, qty: Number(g.qty), threshold: Number(g.low_stock_threshold) }))
+            .map(g => ({ name: g.name as string, sku: g.sku as string, qty: Number(g.qty), threshold: Number(g.low_stock_threshold), imageUrl: g.image_url as string | undefined }))
             .slice(0, 20)
           setInventoryCritical(crit)
           ;(window as any).__garmentMetaBySku = metaBySku
@@ -209,9 +210,11 @@ export function Dashboard() {
         const yesterday = sales.filter(s => new Date(s.created_at) >= startOfYesterday && new Date(s.created_at) < startOfToday)
         const todayCount = today.length
         const todayTotal = today.reduce((acc, s) => acc + Number(s.total || 0), 0)
+        const todayDiscount = today.reduce((acc, s) => acc + Number(s.discount || 0), 0)
         const yestTotal = yesterday.reduce((acc, s) => acc + Number(s.total || 0), 0)
         setTodaySalesCount(todayCount)
         setTodaySalesTotal(todayTotal)
+        setTodayDiscountTotal(todayDiscount)
         setYesterdaySalesTotal(yestTotal)
 
         // Ventas recientes (últimas 10)
@@ -283,20 +286,20 @@ export function Dashboard() {
         {/* 1. Resumen de Ventas del Día */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 lg:gap-4 mb-4 sm:mb-6 lg:mb-8">
           <div className="bg-white rounded-xl sm:rounded-2xl px-3 sm:px-4 lg:px-5 py-4 sm:py-5 lg:py-6 border border-gray-200">
-            <p className="text-[10px] sm:text-xs text-gray-600 font-semibold tracking-wide leading-tight">Ventas de hoy</p>
-            <p className="text-2xl sm:text-3xl lg:text-4xl xl:text-5xl font-extrabold text-black mt-1 leading-none">{todaySalesCount}</p>
+            <p className="text-[9px] sm:text-[11px] text-gray-600 font-semibold tracking-wide leading-tight">Ventas de hoy</p>
+            <p className="text-3xl sm:text-4xl lg:text-5xl xl:text-6xl font-extrabold text-black mt-1 leading-none">{todaySalesCount}</p>
           </div>
           <div className="bg-white rounded-xl sm:rounded-2xl px-3 sm:px-4 lg:px-5 py-4 sm:py-5 lg:py-6 border border-gray-200">
-            <p className="text-[10px] sm:text-xs text-gray-600 font-semibold tracking-wide leading-tight">Total vendido (hoy)</p>
-            <p className="text-xl sm:text-2xl lg:text-3xl xl:text-4xl font-extrabold text-black mt-1 leading-none">{formatThousands(todaySalesTotal)}</p>
+            <p className="text-[9px] sm:text-[11px] text-gray-600 font-semibold tracking-wide leading-tight">Ingresos totales</p>
+            <p className="text-3xl sm:text-4xl lg:text-5xl xl:text-6xl font-extrabold text-black mt-1 leading-none">${` ${formatThousands(todaySalesTotal)}`}</p>
           </div>
           <div className="bg-white rounded-xl sm:rounded-2xl px-3 sm:px-4 lg:px-5 py-4 sm:py-5 lg:py-6 border border-gray-200">
-            <p className="text-[10px] sm:text-xs text-gray-600 font-semibold tracking-wide leading-tight">Ticket promedio</p>
-            <p className="text-xl sm:text-2xl lg:text-3xl xl:text-4xl font-extrabold text-black mt-1 leading-none">{formatThousands(avgTicket)}</p>
+            <p className="text-[9px] sm:text-[11px] text-gray-600 font-semibold tracking-wide leading-tight">Ticket promedio</p>
+            <p className="text-3xl sm:text-4xl lg:text-5xl xl:text-6xl font-extrabold text-black mt-1 leading-none">${` ${formatThousands(avgTicket)}`}</p>
           </div>
           <div className="bg-white rounded-xl sm:rounded-2xl px-3 sm:px-4 lg:px-5 py-4 sm:py-5 lg:py-6 border border-gray-200">
-            <p className="text-[10px] sm:text-xs text-gray-600 font-semibold tracking-wide leading-tight">Variación vs ayer</p>
-            <p className={`text-xl sm:text-2xl lg:text-3xl xl:text-4xl font-extrabold mt-1 leading-none ${vsYesterdayPct >= 0 ? 'text-green-600' : 'text-red-600'}`}>{vsYesterdayPct}%</p>
+            <p className="text-[9px] sm:text-[11px] text-gray-600 font-semibold tracking-wide leading-tight">Descuentos</p>
+            <p className="text-3xl sm:text-4xl lg:text-5xl xl:text-6xl font-extrabold text-black mt-1 leading-none">${` ${formatThousands(todayDiscountTotal)}`}</p>
           </div>
         </div>
 
@@ -310,22 +313,41 @@ export function Dashboard() {
           <div className="hidden md:block p-4 overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
-                <tr className="text-left text-gray-600">
-                  <th className="py-2 pr-4 font-medium">Producto</th>
-                  <th className="py-2 pr-4 font-medium">SKU</th>
-                  <th className="py-2 pr-4 font-medium">Disponible</th>
-                  <th className="py-2 pr-4 font-medium">Umbral</th>
-                  <th className="py-2 font-medium">Acción</th>
+                <tr className="text-gray-600">
+                  <th className="py-2 px-4 font-medium text-center align-middle">Producto</th>
+                  <th className="py-2 px-4 font-medium text-center align-middle">Nombre</th>
+                  <th className="py-2 px-4 font-medium text-center align-middle">SKU</th>
+                  <th className="py-2 px-4 font-medium text-center align-middle">Disponible</th>
+                  <th className="py-2 px-4 font-medium text-center align-middle">Umbral</th>
+                  <th className="py-2 px-4 font-medium text-center align-middle">Acción</th>
                 </tr>
               </thead>
               <tbody>
                 {inventoryCritical.map((p, idx) => (
                   <tr key={idx} className="border-t border-gray-100">
-                    <td className="py-2 pr-4 text-gray-800">{p.name}</td>
-                    <td className="py-2 pr-4 text-gray-600">{p.sku}</td>
-                    <td className="py-2 pr-4 font-semibold text-red-600">{p.qty}</td>
-                    <td className="py-2 pr-4 text-gray-600">{p.threshold}</td>
-                    <td className="py-2">
+                    <td className="py-2 px-4 text-center align-middle">
+                      <div className="flex justify-center">
+                        {p.imageUrl ? (
+                          <img 
+                            src={p.imageUrl} 
+                            alt={p.name}
+                            className="w-12 h-12 rounded-lg object-cover border border-gray-200"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).style.display = 'none'
+                            }}
+                          />
+                        ) : (
+                          <div className="w-12 h-12 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center">
+                            <span className="text-gray-400 text-xs">IMG</span>
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-2 px-4 text-gray-800 text-center align-middle">{p.name}</td>
+                    <td className="py-2 px-4 text-gray-600 text-center align-middle">{p.sku}</td>
+                    <td className="py-2 px-4 font-semibold text-red-600 text-center align-middle">{p.qty}</td>
+                    <td className="py-2 px-4 text-gray-600 text-center align-middle">{p.threshold}</td>
+                    <td className="py-2 px-4 text-center align-middle">
                       <button className="text-xs px-2 py-1 rounded bg-black text-white hover:opacity-90">Solicitar reposición</button>
                     </td>
                   </tr>
@@ -338,7 +360,21 @@ export function Dashboard() {
             {inventoryCritical.length > 0 ? (
               inventoryCritical.map((p, idx) => (
                 <div key={idx} className="border border-gray-200 rounded-lg p-3 space-y-2">
-                  <div className="flex items-start justify-between">
+                  <div className="flex items-start gap-3">
+                    {p.imageUrl ? (
+                      <img 
+                        src={p.imageUrl} 
+                        alt={p.name}
+                        className="w-16 h-16 rounded-lg object-cover border border-gray-200 flex-shrink-0"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = 'none'
+                        }}
+                      />
+                    ) : (
+                      <div className="w-16 h-16 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center flex-shrink-0">
+                        <span className="text-gray-400 text-xs">IMG</span>
+                      </div>
+                    )}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-gray-800 truncate">{p.name}</p>
                       <p className="text-xs text-gray-600 mt-1">SKU: {p.sku}</p>

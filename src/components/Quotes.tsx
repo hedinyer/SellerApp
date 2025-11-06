@@ -26,6 +26,17 @@ export function Quotes() {
   const { formatCurrency } = useConfig()
 
   const [customerNotes, setCustomerNotes] = useState('')
+  const [customerType, setCustomerType] = useState<'natural' | 'empresa'>('natural')
+  const [customerName, setCustomerName] = useState('')
+  const [customerIdNumber, setCustomerIdNumber] = useState('')
+  const [customerEmail, setCustomerEmail] = useState('')
+  const [customerPhone, setCustomerPhone] = useState('')
+  const [companyName, setCompanyName] = useState('')
+  const [companyNit, setCompanyNit] = useState('')
+  const [companyContact, setCompanyContact] = useState('')
+  // Shipping
+  const [shippingDestination, setShippingDestination] = useState('')
+  const [shippingCost, setShippingCost] = useState<number>(0)
   const [items, setItems] = useState<QuoteItem[]>([])
   const [logoBase64, setLogoBase64] = useState<string>('')
 
@@ -105,6 +116,10 @@ export function Quotes() {
     return items.reduce((sum, it) => sum + calcItemTotal(it), 0)
   }, [items])
 
+  const grandTotal = useMemo(() => {
+    return Math.max(0, subtotal + (Number(shippingCost) || 0))
+  }, [subtotal, shippingCost])
+
   function calcItemTotal(item: QuoteItem): number {
     const base = Math.max(0, (item.retailPrice - item.unitDiscount)) * item.quantity
     const mods = item.modifications.reduce((s, m) => s + (m.unitPrice * m.quantity), 0)
@@ -170,6 +185,28 @@ export function Quotes() {
     const pad = (n: number) => String(n).padStart(2, '0')
     const formattedDate = `${quoteDate.getFullYear()}-${pad(quoteDate.getMonth() + 1)}-${pad(quoteDate.getDate())} ${pad(quoteDate.getHours())}:${pad(quoteDate.getMinutes())}`
 
+    const escapeHtml = (s: string) => (s || '').replace(/</g, '&lt;')
+
+    const customerSectionHtml = (() => {
+      if (customerType === 'natural') {
+        const lines = [
+          customerName && `<div><strong>Nombre:</strong> ${escapeHtml(customerName)}</div>`,
+          customerIdNumber && `<div><strong>Documento:</strong> ${escapeHtml(customerIdNumber)}</div>`,
+          customerEmail && `<div><strong>Email:</strong> ${escapeHtml(customerEmail)}</div>`,
+          customerPhone && `<div><strong>Teléfono:</strong> ${escapeHtml(customerPhone)}</div>`
+        ].filter(Boolean).join('')
+        return lines ? `<div class="section"><div class="section-title">Datos del cliente</div><div style="font-size:14px;color:#111">${lines}</div></div>` : ''
+      }
+      const lines = [
+        companyName && `<div><strong>Empresa:</strong> ${escapeHtml(companyName)}</div>`,
+        companyNit && `<div><strong>NIT:</strong> ${escapeHtml(companyNit)}</div>`,
+        companyContact && `<div><strong>Contacto:</strong> ${escapeHtml(companyContact)}</div>`,
+        customerEmail && `<div><strong>Email:</strong> ${escapeHtml(customerEmail)}</div>`,
+        customerPhone && `<div><strong>Teléfono:</strong> ${escapeHtml(customerPhone)}</div>`
+      ].filter(Boolean).join('')
+      return lines ? `<div class="section"><div class="section-title">Datos de la empresa</div><div style="font-size:14px;color:#111">${lines}</div></div>` : ''
+    })()
+
     const rowsHtml = items.map((it, index) => {
       const baseUnit = Math.max(0, it.retailPrice - it.unitDiscount)
       const itemBaseTotal = baseUnit * it.quantity
@@ -192,6 +229,14 @@ export function Quotes() {
                 <td style="padding:10px 8px; border-top:1px solid #e5e7eb; text-align:right; font-weight:700">${formatNumberPlain(itemBaseTotal)}</td>
               </tr>` + (modsHtml ? modsHtml : '')
     }).join('')
+
+    const shippingSectionHtml = (() => {
+      const lines = [
+        shippingDestination && `<div><strong>Destino:</strong> ${escapeHtml(shippingDestination)}</div>`,
+        isFinite(shippingCost) && (shippingCost > 0) && `<div><strong>Costo de envío:</strong> ${formatNumberPlain(shippingCost)}</div>`
+      ].filter(Boolean).join('')
+      return lines ? `<div class="section"><div class="section-title">Envío</div><div style="font-size:14px;color:#111">${lines}</div></div>` : ''
+    })()
 
     const html = `<!doctype html>
 <html>
@@ -235,6 +280,8 @@ export function Quotes() {
             </div>
           </div>
         </div>
+        ${customerSectionHtml}
+        ${shippingSectionHtml}
         ${customerNotes ? `<div class="section"><div class="section-title">Detalle del cliente</div><div style="white-space: pre-wrap; font-size: 14px; color:#111">${customerNotes.replace(/</g,'&lt;')}</div></div>` : ''}
         <div class="section">
           <div class="section-title">Detalle de prendas</div>
@@ -255,6 +302,8 @@ export function Quotes() {
         <div class="totals">
           <div class="total-box">
             <div class="total-row"><span>Subtotal</span><span><strong>${formatNumberPlain(subtotal)}</strong></span></div>
+            ${shippingCost > 0 ? `<div class="total-row"><span>Envío</span><span><strong>${formatNumberPlain(shippingCost)}</strong></span></div>` : ''}
+            <div class="total-row"><span><strong>Total</strong></span><span><strong>${formatNumberPlain(subtotal + (shippingCost > 0 ? shippingCost : 0))}</strong></span></div>
           </div>
         </div>
         <div class="print-actions">
@@ -281,6 +330,69 @@ export function Quotes() {
         <p className="text-xs sm:text-sm text-gray-600">Crea cotizaciones para ropa deportiva personalizada (prendas, descuentos y modificaciones como logos, estampados, bordados, etc.).</p>
       </div>
 
+      {/* Datos del cliente */}
+      <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4 mb-3 sm:mb-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-xs sm:text-sm font-medium">Datos del cliente</div>
+          <div className="inline-flex rounded-md p-0.5 bg-gray-100 border border-gray-200">
+            <button
+              className={`px-2.5 py-1 text-[11px] sm:text-xs rounded ${customerType === 'natural' ? 'bg-white border border-gray-200' : 'text-gray-600'}`}
+              onClick={() => setCustomerType('natural')}
+              type="button"
+            >Persona natural</button>
+            <button
+              className={`px-2.5 py-1 text-[11px] sm:text-xs rounded ${customerType === 'empresa' ? 'bg-white border border-gray-200' : 'text-gray-600'}`}
+              onClick={() => setCustomerType('empresa')}
+              type="button"
+            >Empresa</button>
+          </div>
+        </div>
+
+        {customerType === 'natural' ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] text-gray-600 mb-1 block">Nombre completo</label>
+              <input value={customerName} onChange={e => setCustomerName(e.target.value)} className="w-full border rounded px-2 py-1.5 text-xs sm:text-sm bg-white text-black" placeholder="Nombre y apellidos" />
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-600 mb-1 block">Documento</label>
+              <input value={customerIdNumber} onChange={e => setCustomerIdNumber(e.target.value)} className="w-full border rounded px-2 py-1.5 text-xs sm:text-sm bg-white text-black" placeholder="CC o documento" />
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-600 mb-1 block">Email</label>
+              <input value={customerEmail} onChange={e => setCustomerEmail(e.target.value)} className="w-full border rounded px-2 py-1.5 text-xs sm:text-sm bg-white text-black" placeholder="correo@ejemplo.com" />
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-600 mb-1 block">Teléfono</label>
+              <input value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} className="w-full border rounded px-2 py-1.5 text-xs sm:text-sm bg-white text-black" placeholder="+57 300 000 0000" />
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] text-gray-600 mb-1 block">Razón social</label>
+              <input value={companyName} onChange={e => setCompanyName(e.target.value)} className="w-full border rounded px-2 py-1.5 text-xs sm:text-sm bg-white text-black" placeholder="Nombre de la empresa" />
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-600 mb-1 block">NIT</label>
+              <input value={companyNit} onChange={e => setCompanyNit(e.target.value)} className="w-full border rounded px-2 py-1.5 text-xs sm:text-sm bg-white text-black" placeholder="NIT" />
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-600 mb-1 block">Contacto</label>
+              <input value={companyContact} onChange={e => setCompanyContact(e.target.value)} className="w-full border rounded px-2 py-1.5 text-xs sm:text-sm bg-white text-black" placeholder="Nombre del contacto" />
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-600 mb-1 block">Email</label>
+              <input value={customerEmail} onChange={e => setCustomerEmail(e.target.value)} className="w-full border rounded px-2 py-1.5 text-xs sm:text-sm bg-white text-black" placeholder="correo@empresa.com" />
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-600 mb-1 block">Teléfono</label>
+              <input value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} className="w-full border rounded px-2 py-1.5 text-xs sm:text-sm bg-white text-black" placeholder="+57 300 000 0000" />
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4 mb-3 sm:mb-4">
         <div className="text-xs sm:text-sm font-medium mb-2">Detalle de lo que quiere el cliente</div>
         <textarea
@@ -295,7 +407,45 @@ export function Quotes() {
         </div>
       </div>
 
-      <div className="bg-white rounded-lg border border-gray-200 p-2 sm:p-3">
+      {/* Envío */}
+      <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4 mb-3 sm:mb-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-xs sm:text-sm font-medium">Envío</div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <div className="sm:col-span-2">
+            <label className="text-[10px] text-gray-600 mb-1 block">Destino</label>
+            <input value={shippingDestination} onChange={e => setShippingDestination(e.target.value)} className="w-full border rounded px-2 py-1.5 text-xs sm:text-sm bg-white text-black" placeholder="Ciudad, dirección o punto de entrega" />
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-600 mb-1 block">Costo de envío</label>
+            <input
+              inputMode="decimal"
+              value={String(shippingCost)}
+              onChange={e => setShippingCost(Number((e.target.value||'').replace(/[^0-9.]/g,'')||0))}
+              className="w-full border rounded px-2 py-1.5 text-xs sm:text-sm bg-white text-right"
+              placeholder="0"
+            />
+          </div>
+        </div>
+        {shippingCost > 0 && (
+          <div className="mt-2 text-right text-xs sm:text-sm text-gray-700">Se sumará <span className="font-semibold">{formatNumberPlain(shippingCost)}</span> al total.</div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+        {/* Card Header */}
+        <div className="px-3 sm:px-4 py-3 sm:py-4 border-b border-gray-100 flex items-center justify-between">
+          <div>
+            <h2 className="text-sm sm:text-base font-semibold text-gray-900">Resumen del pedido</h2>
+            <p className="text-xs text-gray-500">Detalle de ítems y modificaciones</p>
+          </div>
+          <span className="inline-flex items-center rounded-full bg-gray-50 px-3 py-1 text-[11px] sm:text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-200">
+            Total: {formatNumberPlain(grandTotal)}
+          </span>
+        </div>
+
+        <div className="p-2 sm:p-3">
         {/* Desktop Header */}
         <div className="hidden md:grid grid-cols-12 gap-2 text-xs font-semibold text-gray-700 border-b pb-2">
           <div className="col-span-4">Descripción</div>
@@ -457,27 +607,35 @@ export function Quotes() {
               </div>
             </div>
 
-            {/* Tabla de precios modificaciones */}
-            <div className="mt-2 sm:mt-3">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-1.5 sm:mb-2">
-                <div className="text-[10px] sm:text-xs font-medium text-gray-700">Tabla precios modificaciones</div>
-                <button className="text-[10px] sm:text-xs border rounded px-2 py-1 whitespace-nowrap" onClick={() => addModification(item.id)}>Agregar modificación</button>
+            {/* Modificaciones */}
+            <div className="mt-3 sm:mt-4">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-[11px] sm:text-xs font-semibold text-gray-900">Modificaciones</h3>
+                <button className="inline-flex items-center rounded-md bg-white px-2.5 py-1 text-[11px] sm:text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-200 hover:bg-gray-50" onClick={() => addModification(item.id)}>Agregar modificación</button>
               </div>
-              {/* Desktop Header */}
-              <div className="hidden md:grid grid-cols-12 gap-2 text-[11px] text-gray-600 border-b pb-1">
-                <div className="col-span-4">Modificación</div>
-                <div className="col-span-4">Detalle</div>
-                <div className="col-span-2 text-right">Valor unitario</div>
-                <div className="col-span-1 text-center">Cant</div>
-                <div className="col-span-1 text-right">Subtotal</div>
-              </div>
+
               {item.modifications.length === 0 && (
-                <div className="text-[10px] sm:text-xs text-gray-500 py-2">Sin modificaciones aún. Ejemplos: Logo pecho, dorsal, serigrafía, bordado, numeración.</div>
+                <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 p-4 text-center">
+                  <p className="text-[11px] sm:text-xs font-medium text-gray-900">Sin modificaciones aún</p>
+                  <p className="text-[10px] sm:text-xs text-gray-500">Agrega una modificación para verla aquí.</p>
+                </div>
               )}
-              {item.modifications.map(mod => {
+
+              {item.modifications.length > 0 && (
+                <div className="overflow-hidden rounded-lg border border-gray-100">
+                  {/* Desktop Header */}
+                  <div className="hidden md:grid grid-cols-12 gap-2 text-[11px] text-gray-600 bg-gray-50 border-b px-2 py-1.5">
+                    <div className="col-span-4">Modificación</div>
+                    <div className="col-span-4">Detalle</div>
+                    <div className="col-span-2 text-right">Valor unitario</div>
+                    <div className="col-span-1 text-center">Cant</div>
+                    <div className="col-span-1 text-right">Subtotal</div>
+                  </div>
+                  <div className="divide-y divide-gray-100">
+                  {item.modifications.map(mod => {
                 const subtotal = Math.max(0, (mod.unitPrice || 0) * (mod.quantity || 0))
                 return (
-                  <div key={mod.id} className="border-b last:border-b-0 py-2 sm:py-1">
+                  <div key={mod.id} className="py-2 sm:py-1">
                     {/* Desktop Grid View */}
                     <div className="hidden md:grid grid-cols-12 gap-2 items-center">
                       <div className="col-span-4">
@@ -515,9 +673,6 @@ export function Quotes() {
                       </div>
                       <div className="col-span-1 text-right font-medium text-xs">
                         {formatNumberPlain(subtotal)}
-                      </div>
-                      <div className="col-span-12 text-right">
-                        <button className="text-[10px] sm:text-xs text-red-600" onClick={() => removeModification(item.id, mod.id)}>Eliminar</button>
                       </div>
                     </div>
                     {/* Mobile Card View */}
@@ -567,13 +722,16 @@ export function Quotes() {
                           </div>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <button className="text-[10px] text-red-600" onClick={() => removeModification(item.id, mod.id)}>Eliminar</button>
-                      </div>
+                    </div>
+                    <div className="text-right px-1">
+                      <button className="text-[10px] sm:text-xs text-red-600" onClick={() => removeModification(item.id, mod.id)}>Eliminar</button>
                     </div>
                   </div>
                 )
-              })}
+                  })}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="mt-2 sm:mt-3 text-right">
@@ -587,7 +745,8 @@ export function Quotes() {
             className="w-full sm:w-auto border rounded px-3 py-2 bg-black text-white text-xs sm:text-sm"
             onClick={handleGenerateQuote}
           >Generar cotización</button>
-          <div className="text-right text-sm sm:text-base lg:text-lg font-extrabold">Total cotización: {formatNumberPlain(subtotal)}</div>
+          <div className="text-right text-sm sm:text-base lg:text-lg font-extrabold">Total cotización: {formatNumberPlain(grandTotal)}</div>
+        </div>
         </div>
       </div>
 

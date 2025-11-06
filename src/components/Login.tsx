@@ -21,6 +21,7 @@ export function Login() {
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [selectedRole, setSelectedRole] = useState<'user' | 'admin'>('user')
+  const [isLoggingIn, setIsLoggingIn] = useState(false)
   
   // Ensure username/password are set for default role on mount
   useEffect(() => {
@@ -29,12 +30,12 @@ export function Login() {
       setPassword('123')
     } else if (selectedRole === 'admin') {
       setUsername('admin')
-      setPassword('admin123')
+      setPassword('Dwell.admin.2025*')
     }
     // eslint-disable-next-line
   }, [])
   
-  const { login, isLoading } = useAuth()
+  const { login } = useAuth()
   const { t, getFontSizeClass } = useConfig()
 
   // Memoize font size class
@@ -48,9 +49,18 @@ export function Login() {
       setError('Por favor completa todos los campos')
       return
     }
-    const success = await login(username, password)
-    if (!success) {
-      setError('Usuario o contraseña incorrectos')
+    setIsLoggingIn(true)
+    try {
+      const result = await login(username, password)
+      if (!result.success) {
+        if (result.error === 'wrong_password') {
+          setError('Contrasena incorrecta, intentalo de nuevo')
+        } else {
+          setError('Usuario o contraseña incorrectos')
+        }
+      }
+    } finally {
+      setIsLoggingIn(false)
     }
   }, [username, password, login])
 
@@ -62,7 +72,7 @@ export function Login() {
       setPassword('123')
     } else if (role === 'admin') {
       setUsername('admin')
-      setPassword('admin123')
+      setPassword('Dwell.admin.2025*')
     }
   }, [])
 
@@ -217,7 +227,7 @@ export function Login() {
                     transition: 'border 0.2s',
                   }}
                   placeholder=""
-                  disabled={isLoading}
+                  disabled={isLoggingIn}
                 />
               </div>
             </div>
@@ -248,13 +258,13 @@ export function Login() {
                     transition: 'border 0.2s',
                   }}
                   placeholder=""
-                  disabled={isLoading}
+                  disabled={isLoggingIn}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   style={{position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: '#9ca3af'}}
-                  disabled={isLoading}
+                  disabled={isLoggingIn}
                 >
                   {showPassword ? <EyeOffIcon size={20} /> : <EyeIcon size={20} />}
                 </button>
@@ -272,7 +282,7 @@ export function Login() {
             {/* Submit Button */}
             <button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoggingIn}
               style={{
                 width: '100%',
                 background: '#111',
@@ -282,8 +292,8 @@ export function Login() {
                 padding: '10px 0',
                 fontWeight: 700,
                 fontSize: 16,
-                cursor: isLoading ? 'not-allowed' : 'pointer',
-                opacity: isLoading ? 0.6 : 1,
+                cursor: isLoggingIn ? 'not-allowed' : 'pointer',
+                opacity: isLoggingIn ? 0.6 : 1,
                 boxShadow: 'none',
                 display: 'flex',
                 alignItems: 'center',
@@ -292,7 +302,7 @@ export function Login() {
                 transition: 'background 0.2s, color 0.2s',
               }}
             >
-              {isLoading ? (
+              {isLoggingIn ? (
                 <>
                   <div style={{width: 20, height: 20, border: '2px solid #fff', borderTop: '2px solid #111', borderRadius: '50%', animation: 'spin 1s linear infinite'}} />
                   <span>Verificando...</span>

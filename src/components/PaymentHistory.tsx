@@ -2,7 +2,6 @@ import { useMemo, useState, useEffect } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import './animations.css'
 import './config-styles.css'
-import SpotlightCard from './SpotlightCard'
 import { useConfig } from '../contexts/ConfigContext'
 import { useAuth } from '../contexts/AuthContext'
 import {
@@ -593,65 +592,22 @@ export function PaymentHistory() {
         </div>
 
         {/* Statistics Cards */}
-        <div className="grid grid-cols-2 lg:flex lg:justify-center gap-2 sm:gap-3 lg:gap-4 mb-4 sm:mb-6 lg:mb-8">
-          <div className="w-full lg:w-48">
-            <SpotlightCard spotlightColor="rgba(0, 0, 0, 0.08)">
-              <div className="rounded-xl sm:rounded-2xl px-3 sm:px-4 py-4 sm:py-6 shadow-2xl animate-slideInUp relative overflow-hidden h-24 sm:h-32 xl:h-36 flex flex-col justify-between config-font-medium metallic-bg" style={{ animationDelay: '0ms', boxShadow: '0 4px 16px 0 rgba(34,197,94,0.15)' }}>
-                <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                <div className="flex flex-col justify-between h-full">
-                  <h3 className="font-semibold text-black text-[10px] sm:text-xs lg:text-sm mb-1 sm:mb-2 tracking-wide uppercase opacity-80 text-center w-full leading-tight">Ingresos Totales</h3>
-                  <div className="flex flex-col items-center justify-center flex-1">
-                    <p className="text-lg sm:text-xl lg:text-2xl xl:text-3xl font-extrabold text-black leading-none" style={{ fontFamily: 'Helvetica Neue' }}>{formatNumber(totalRevenue)}</p>
-                  </div>
-                  <p className="text-[10px] sm:text-xs lg:text-sm font-normal text-black/70 leading-tight">total recaudado</p>
-                </div>
-              </div>
-            </SpotlightCard>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 lg:gap-4 mb-4 sm:mb-6 lg:mb-8">
+          <div className="bg-white rounded-xl sm:rounded-2xl px-3 sm:px-4 lg:px-5 py-4 sm:py-5 lg:py-6 border border-gray-200">
+            <p className="text-[9px] sm:text-[11px] text-gray-600 font-semibold tracking-wide leading-tight">Ingresos totales</p>
+            <p className="text-3xl sm:text-4xl lg:text-5xl xl:text-6xl font-extrabold text-black mt-1 leading-none">${` ${formatNumber(totalRevenue)}`}</p>
           </div>
-
-          <div className="w-full lg:w-48">
-            <SpotlightCard spotlightColor="rgba(0, 0, 0, 0.08)">
-              <div className="rounded-xl sm:rounded-2xl px-3 sm:px-4 py-4 sm:py-6 shadow-2xl animate-slideInUp relative overflow-hidden h-24 sm:h-32 xl:h-36 flex flex-col justify-between config-font-medium metallic-bg" style={{ animationDelay: '100ms', boxShadow: '0 4px 16px 0 rgba(59,130,246,0.15)' }}>
-                <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                <div className="flex flex-col justify-between h-full">
-                  <h3 className="font-semibold text-black text-[10px] sm:text-xs lg:text-sm mb-1 sm:mb-2 tracking-wide uppercase opacity-80 text-center w-full leading-tight">Descuentos</h3>
-                  <div className="flex flex-col items-center justify-center flex-1">
-                    <p className="text-lg sm:text-xl lg:text-2xl xl:text-3xl font-extrabold text-black leading-none" style={{ fontFamily: 'Helvetica Neue' }}>{formatNumber(totalDiscounts)}</p>
-                  </div>
-                  <p className="text-[10px] sm:text-xs lg:text-sm font-normal text-black/70 leading-tight">aplicados</p>
-                </div>
-              </div>
-            </SpotlightCard>
+          <div className="bg-white rounded-xl sm:rounded-2xl px-3 sm:px-4 lg:px-5 py-4 sm:py-5 lg:py-6 border border-gray-200">
+            <p className="text-[9px] sm:text-[11px] text-gray-600 font-semibold tracking-wide leading-tight">Descuentos</p>
+            <p className="text-3xl sm:text-4xl lg:text-5xl xl:text-6xl font-extrabold text-black mt-1 leading-none">${` ${formatNumber(totalDiscounts)}`}</p>
           </div>
-
-          <div className="w-full lg:w-48">
-            <SpotlightCard spotlightColor="rgba(0, 0, 0, 0.08)">
-              <div className="rounded-xl sm:rounded-2xl px-3 sm:px-4 py-4 sm:py-6 shadow-2xl animate-slideInUp relative overflow-hidden h-24 sm:h-32 xl:h-36 flex flex-col justify-between config-font-medium metallic-bg" style={{ animationDelay: '200ms', boxShadow: '0 4px 16px 0 rgba(168,85,247,0.15)' }}>
-                <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                <div className="flex flex-col justify-between h-full">
-                  <h3 className="font-semibold text-black text-[10px] sm:text-xs lg:text-sm mb-1 sm:mb-2 tracking-wide uppercase opacity-80 text-center w-full leading-tight">Ticket Promedio</h3>
-                  <div className="flex flex-col items-center justify-center flex-1">
-                    <p className="text-lg sm:text-xl lg:text-2xl xl:text-3xl font-extrabold text-black leading-none" style={{ fontFamily: 'Helvetica Neue' }}>{formatNumber2(averageTicket)}</p>
-                  </div>
-                  <p className="text-[10px] sm:text-xs lg:text-sm font-normal text-black/70 leading-tight">por venta</p>
-                </div>
-              </div>
-            </SpotlightCard>
+          <div className="bg-white rounded-xl sm:rounded-2xl px-3 sm:px-4 lg:px-5 py-4 sm:py-5 lg:py-6 border border-gray-200">
+            <p className="text-[9px] sm:text-[11px] text-gray-600 font-semibold tracking-wide leading-tight">Ticket promedio</p>
+            <p className="text-3xl sm:text-4xl lg:text-5xl xl:text-6xl font-extrabold text-black mt-1 leading-none">${` ${formatNumber2(averageTicket)}`}</p>
           </div>
-
-          <div className="w-full lg:w-48">
-            <SpotlightCard spotlightColor="rgba(0, 0, 0, 0.08)">
-              <div className="rounded-xl sm:rounded-2xl px-3 sm:px-4 py-4 sm:py-6 shadow-2xl animate-slideInUp relative overflow-hidden h-24 sm:h-32 xl:h-36 flex flex-col justify-between config-font-medium metallic-bg" style={{ animationDelay: '300ms', boxShadow: '0 4px 16px 0 rgba(251,146,60,0.15)' }}>
-                <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                <div className="flex flex-col justify-between h-full">
-                  <h3 className="font-semibold text-black text-[10px] sm:text-xs lg:text-sm mb-1 sm:mb-2 tracking-wide uppercase opacity-80 text-center w-full leading-tight">Ventas</h3>
-                  <div className="flex flex-col items-center justify-center flex-1">
-                    <p className="text-lg sm:text-xl lg:text-2xl xl:text-3xl font-extrabold text-black leading-none" style={{ fontFamily: 'Helvetica Neue' }}>{filteredSales.length}</p>
-                  </div>
-                  <p className="text-[10px] sm:text-xs lg:text-sm font-normal text-black/70 leading-tight">encontradas</p>
-                </div>
-              </div>
-            </SpotlightCard>
+          <div className="bg-white rounded-xl sm:rounded-2xl px-3 sm:px-4 lg:px-5 py-4 sm:py-5 lg:py-6 border border-gray-200">
+            <p className="text-[9px] sm:text-[11px] text-gray-600 font-semibold tracking-wide leading-tight">Ventas</p>
+            <p className="text-3xl sm:text-4xl lg:text-5xl xl:text-6xl font-extrabold text-black mt-1 leading-none">{filteredSales.length}</p>
           </div>
         </div>
 
@@ -876,8 +832,7 @@ export function PaymentHistory() {
           <div className="fixed inset-0 bg-white/20 backdrop-blur-[2px] z-0 transition-all duration-300" />
           {/* Modal centrado */}
           <div 
-            className="bg-white rounded-xl sm:rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden border border-gray-100 flex flex-col z-10 relative"
-            style={{ boxShadow: '0 25px 50px -12px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.04)' }}
+            className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto flex flex-col z-10 relative"
           >
             {/* Header */}
             <div className="px-3 sm:px-6 pt-4 sm:pt-6 pb-3 sm:pb-4 border-b border-gray-100 bg-white sticky top-0 z-10">
