@@ -54,6 +54,8 @@ export function AdminEmployees() {
     department: '',
     shifts: [] as string[]
   })
+  const [isSavingNew, setIsSavingNew] = useState(false)
+  const [isSavingEdit, setIsSavingEdit] = useState(false)
   const { formatCurrency } = useConfig()
 
   // Cargar datos del empleado cuando se edita
@@ -356,7 +358,7 @@ export function AdminEmployees() {
                       <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center mr-4">
                         <UserIcon size={20} className="text-purple-600" />
                       </div>
-                      <div>
+                      <div className="text-left">
                         <div className="text-sm font-medium text-gray-900">{employee.name}</div>
                         <div className="text-sm text-gray-500">{employee.email}</div>
                         <div className="text-xs text-gray-400">{employee.phone}</div>
@@ -982,7 +984,8 @@ export function AdminEmployees() {
       {isAddingEmployee && (
         <div 
           className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30 backdrop-blur-sm"
-          onClick={() => setIsAddingEmployee(false)}
+          style={{ minHeight: '100vh', minWidth: '100vw', width: '100%', height: '100%' }}
+          onClick={() => { if (!isSavingNew) setIsAddingEmployee(false) }}
         >
           <div 
             className="bg-white rounded-[12px] shadow-2xl max-w-lg w-full mx-4 p-6 relative animate-fadeInSlide"
@@ -990,7 +993,7 @@ export function AdminEmployees() {
           >
             <button
               className="absolute top-3 right-3 text-gray-400 hover:text-gray-700 text-xl font-bold focus:outline-none"
-              onClick={() => setIsAddingEmployee(false)}
+              onClick={() => { if (!isSavingNew) setIsAddingEmployee(false) }}
               aria-label="Cerrar"
             >
               <span className="text-2xl leading-none">&times;</span>
@@ -1000,12 +1003,26 @@ export function AdminEmployees() {
             {/* Form */}
             <form onSubmit={async (e) => {
               e.preventDefault()
+              if (isSavingNew) return
               if (!newEmployee.name || !newEmployee.email || !newEmployee.position || !newEmployee.salary || !newEmployee.department) {
                 alert('Por favor completa todos los campos obligatorios')
                 return
               }
 
+              // Validaciones para cumplir con los CHECK CONSTRAINTS de la tabla
+              const allowedPositions = ['Vendedor', 'Administración', 'Fábrica']
+              const allowedDepartments = ['Ventas', 'Administración', 'Fábrica']
+              if (!allowedPositions.includes(newEmployee.position)) {
+                alert(`El cargo (position) debe ser uno de: ${allowedPositions.join(', ')}`)
+                return
+              }
+              if (!allowedDepartments.includes(newEmployee.department)) {
+                alert(`El departamento debe ser uno de: ${allowedDepartments.join(', ')}`)
+                return
+              }
+
               try {
+                setIsSavingNew(true)
                 const payload = {
                   name: newEmployee.name,
                   email: newEmployee.email,
@@ -1056,9 +1073,12 @@ export function AdminEmployees() {
                   shifts: []
                 })
                 setIsAddingEmployee(false)
-              } catch (err) {
-                console.error(err)
-                alert('No se pudo guardar el empleado. Intenta nuevamente.')
+              } catch (err: any) {
+                console.error('Insert employee error:', err)
+                const message = err?.message || err?.error?.message || err?.details || 'Error desconocido'
+                alert(`No se pudo guardar el empleado: ${message}`)
+              } finally {
+                setIsSavingNew(false)
               }
             }}>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
@@ -1228,16 +1248,17 @@ export function AdminEmployees() {
               <div className="flex gap-3 justify-end">
                 <button
                   type="button"
-                  onClick={() => setIsAddingEmployee(false)}
+                  onClick={() => { if (!isSavingNew) setIsAddingEmployee(false) }}
                   className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors text-sm"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-sm"
+                  disabled={isSavingNew}
+                  className={`px-3 py-1.5 rounded transition-colors text-sm ${isSavingNew ? 'bg-blue-300 text-white cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
                 >
-                  Agregar Empleado
+                  {isSavingNew ? 'Guardando…' : 'Agregar Empleado'}
                 </button>
               </div>
             </form>
@@ -1248,8 +1269,9 @@ export function AdminEmployees() {
       {/* Edit Employee Modal */}
       {editingEmployee && (
         <div 
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-          onClick={() => setEditingEmployee(null)}
+          className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          style={{ minHeight: '100vh', minWidth: '100vw', width: '100%', height: '100%' }}
+          onClick={() => { if (!isSavingEdit) setEditingEmployee(null) }}
         >
           <div 
             className="bg-white rounded max-w-2xl w-full max-h-[90vh] overflow-y-auto apple-scrollbar-dark"
@@ -1260,7 +1282,7 @@ export function AdminEmployees() {
               <div className="relative mb-6">
                 <h2 className="text-lg font-bold text-gray-900 text-center">Editar Empleado</h2>
                 <button
-                  onClick={() => setEditingEmployee(null)}
+                  onClick={() => { if (!isSavingEdit) setEditingEmployee(null) }}
                   className="absolute top-0 right-0 w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-all duration-200"
                 >
                   <span className="text-xl leading-none">&times;</span>
@@ -1268,29 +1290,72 @@ export function AdminEmployees() {
               </div>
 
               {/* Form */}
-              <form onSubmit={(e) => {
+              <form onSubmit={async (e) => {
                 e.preventDefault()
+                if (isSavingEdit) return
                 if (!editEmployee.name || !editEmployee.email || !editEmployee.position || !editEmployee.salary || !editEmployee.department) {
                   alert('Por favor completa todos los campos obligatorios')
                   return
                 }
 
-                const updatedEmployee: Employee = {
-                  id: editingEmployee,
-                  name: editEmployee.name,
-                  email: editEmployee.email,
-                  phone: editEmployee.phone,
-                  position: editEmployee.position,
-                  salary: parseFloat(editEmployee.salary),
-                  payrollType: editEmployee.payrollType,
-                  startDate: editEmployee.startDate,
-                  status: editEmployee.status,
-                  department: editEmployee.department,
-                  shifts: editEmployee.shifts
+                // Validaciones alineadas con CHECK CONSTRAINTS
+                const allowedPositions = ['Vendedor', 'Administración', 'Fábrica']
+                const allowedDepartments = ['Ventas', 'Administración', 'Fábrica']
+                if (!allowedPositions.includes(editEmployee.position)) {
+                  alert(`El cargo (position) debe ser uno de: ${allowedPositions.join(', ')}`)
+                  return
+                }
+                if (!allowedDepartments.includes(editEmployee.department)) {
+                  alert(`El departamento debe ser uno de: ${allowedDepartments.join(', ')}`)
+                  return
                 }
 
-                setEmployees(prev => prev.map(emp => emp.id === editingEmployee ? updatedEmployee : emp))
-                setEditingEmployee(null)
+                try {
+                  setIsSavingEdit(true)
+                  const payload: any = {
+                    name: editEmployee.name,
+                    email: editEmployee.email,
+                    phone: editEmployee.phone || null,
+                    position: editEmployee.position,
+                    department: editEmployee.department,
+                    salary: parseFloat(editEmployee.salary),
+                    payroll_type: editEmployee.payrollType,
+                    start_date: editEmployee.startDate,
+                    status: editEmployee.status,
+                    shifts: editEmployee.shifts
+                  }
+                  const { data, error } = await supabase
+                    .from('employees')
+                    .update(payload)
+                    .eq('id', editingEmployee)
+                    .select('*')
+                    .single()
+                  if (error) throw error
+
+                  if (data) {
+                    const updated: Employee = {
+                      id: String(data.id),
+                      name: data.name,
+                      email: data.email,
+                      phone: data.phone,
+                      position: data.position,
+                      salary: Number(data.salary) || 0,
+                      payrollType: data.payroll_type,
+                      startDate: data.start_date,
+                      status: data.status,
+                      department: data.department,
+                      shifts: Array.isArray(data.shifts) ? data.shifts : []
+                    }
+                    setEmployees(prev => prev.map(emp => emp.id === editingEmployee ? updated : emp))
+                  }
+                  setEditingEmployee(null)
+                } catch (err: any) {
+                  console.error('Update employee error:', err)
+                  const message = err?.message || err?.error?.message || err?.details || 'Error desconocido'
+                  alert(`No se pudo actualizar el empleado: ${message}`)
+                } finally {
+                  setIsSavingEdit(false)
+                }
               }}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                   {/* Información Personal */}
@@ -1379,12 +1444,10 @@ export function AdminEmployees() {
                         className="w-full px-3 py-2 bg-white text-black border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                         required
                       >
-                        <option value="">Seleccionar departamento</option>
-                        <option value="Servicio">Servicio</option>
-                        <option value="Cocina">Cocina</option>
-                        <option value="Administración">Administración</option>
-                        <option value="Limpieza">Limpieza</option>
-                        <option value="Seguridad">Seguridad</option>
+                      <option value="">Seleccionar departamento</option>
+                      <option value="Ventas">Ventas</option>
+                      <option value="Administración">Administración</option>
+                      <option value="Fábrica">Fábrica</option>
                       </select>
                     </div>
 
@@ -1461,16 +1524,17 @@ export function AdminEmployees() {
                 <div className="flex gap-3 justify-end">
                   <button
                     type="button"
-                    onClick={() => setEditingEmployee(null)}
+                    onClick={() => { if (!isSavingEdit) setEditingEmployee(null) }}
                     className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors text-sm"
                   >
                     Cancelar
                   </button>
                   <button
                     type="submit"
-                    className="px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-sm"
+                    disabled={isSavingEdit}
+                    className={`px-3 py-1.5 rounded transition-colors text-sm ${isSavingEdit ? 'bg-blue-300 text-white cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
                   >
-                    Guardar Cambios
+                    {isSavingEdit ? 'Guardando…' : 'Guardar Cambios'}
                   </button>
                 </div>
               </form>

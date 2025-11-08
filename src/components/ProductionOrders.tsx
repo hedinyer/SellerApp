@@ -12,15 +12,45 @@ type ProductionOrder = {
   pdfPath?: string
   status: ProductionStatus
   createdAt: string
+  vendorId?: string
+  vendorName?: string
 }
 
 const STATUS_OPTIONS: ProductionStatus[] = ['Recibida', 'En proceso', 'Terminada', 'En camino', 'Entregada']
+
+interface Employee {
+  id: string
+  name: string
+}
 
 export default function ProductionOrders() {
   const [orders, setOrders] = useState<ProductionOrder[]>([])
   const [title, setTitle] = useState('')
   const [quoteNumber, setQuoteNumber] = useState('')
   const [file, setFile] = useState<File | null>(null)
+  const [selectedVendorId, setSelectedVendorId] = useState<string>('')
+  const [employees, setEmployees] = useState<Employee[]>([])
+
+  // Load employees
+  useEffect(() => {
+    async function loadEmployees() {
+      const { data, error } = await supabase
+        .from('employees')
+        .select('id, name, status')
+        .eq('status', 'activo')
+        .order('name', { ascending: true })
+      if (error || !data) return
+      const list: Employee[] = (data as any[]).map(r => ({
+        id: String(r.id),
+        name: String(r.name || 'Sin nombre')
+      }))
+      setEmployees(list)
+      if (list.length > 0 && !selectedVendorId) {
+        setSelectedVendorId(list[0].id)
+      }
+    }
+    loadEmployees()
+  }, [])
 
   // Load existing orders from Supabase
   useEffect(() => {
@@ -30,9 +60,30 @@ export default function ProductionOrders() {
         .select('*')
         .order('created_at', { ascending: false })
       if (error || !data) return
+      
+      // Load vendor names for orders that have vendor_id
+      const vendorIds = data
+        .map((row: any) => row.vendor_id || row.vendorId)
+        .filter((id: any) => id) as string[]
+      
+      let vendorMap: Record<string, string> = {}
+      if (vendorIds.length > 0) {
+        const { data: vendorData } = await supabase
+          .from('employees')
+          .select('id, name')
+          .in('id', vendorIds)
+        if (vendorData) {
+          vendorMap = vendorData.reduce((acc: Record<string, string>, emp: any) => {
+            acc[String(emp.id)] = String(emp.name || 'Sin nombre')
+            return acc
+          }, {})
+        }
+      }
+      
       const list: ProductionOrder[] = data.map((row: any) => {
         const pdfPath: string = row.pdf_path || row.pdfPath || ''
         const publicUrl = pdfPath ? supabase.storage.from('images').getPublicUrl(pdfPath).data.publicUrl : ''
+        const vendorId = row.vendor_id || row.vendorId
         return {
           id: row.id,
           title: row.title || row.nombre || 'Orden',
@@ -41,7 +92,9 @@ export default function ProductionOrders() {
           pdfUrl: publicUrl,
           pdfPath,
           status: (row.status as ProductionStatus) || 'Recibida',
-          createdAt: row.created_at || new Date().toISOString()
+          createdAt: row.created_at || new Date().toISOString(),
+          vendorId: vendorId ? String(vendorId) : undefined,
+          vendorName: vendorId ? vendorMap[String(vendorId)] : undefined
         }
       })
       setOrders(list)
@@ -89,6 +142,9 @@ export default function ProductionOrders() {
 
     const publicUrl = supabase.storage.from('images').getPublicUrl(storagePath).data.publicUrl
 
+    // Get vendor name
+    const selectedVendor = employees.find(emp => emp.id === selectedVendorId)
+    
     // Insert DB row
     const { data: inserted, error: insertError } = await supabase
       .from('OrdenesProduccion')
@@ -98,7 +154,8 @@ export default function ProductionOrders() {
         pdf_path: storagePath,
         pdf_name: file.name,
         status: 'Recibida',
-        created_at: now.toISOString()
+        created_at: now.toISOString(),
+        vendor_id: selectedVendorId || null
       })
       .select()
       .single()
@@ -112,7 +169,9 @@ export default function ProductionOrders() {
       pdfUrl: publicUrl,
       pdfPath: storagePath,
       status: inserted.status as ProductionStatus,
-      createdAt: inserted.created_at || now.toISOString()
+      createdAt: inserted.created_at || now.toISOString(),
+      vendorId: selectedVendorId || undefined,
+      vendorName: selectedVendor?.name || undefined
     }
     setOrders(prev => [order, ...prev])
     setTitle('')
@@ -143,7 +202,7 @@ export default function ProductionOrders() {
 
       {/* Create order */}
       <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4 mb-3 sm:mb-4">
-        <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-6 gap-2">
           <div className="sm:col-span-2">
             <label className="text-[10px] text-gray-600 mb-1 block">Título (opcional)</label>
             <input value={title} onChange={e => setTitle(e.target.value)} className="w-full border rounded px-2 py-1.5 text-xs sm:text-sm bg-white text-black" placeholder="Nombre de la orden" />
@@ -151,6 +210,18 @@ export default function ProductionOrders() {
           <div>
             <label className="text-[10px] text-gray-600 mb-1 block">N° Cotización (opcional)</label>
             <input value={quoteNumber} onChange={e => setQuoteNumber(e.target.value)} className="w-full border rounded px-2 py-1.5 text-xs sm:text-sm bg-white text-black" placeholder="Ej. COT-00123" />
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-600 mb-1 block">Vendedor</label>
+            <select value={selectedVendorId} onChange={e => setSelectedVendorId(e.target.value)} className="w-full border rounded px-2 py-1.5 text-xs sm:text-sm bg-white text-black" disabled={employees.length === 0}>
+              {employees.length === 0 ? (
+                <option value="">Cargando empleados...</option>
+              ) : (
+                employees.map(emp => (
+                  <option key={emp.id} value={emp.id}>{emp.name}</option>
+                ))
+              )}
+            </select>
           </div>
           <div className="sm:col-span-2">
             <label className="text-[10px] text-gray-600 mb-1 block">Archivo PDF</label>
@@ -168,9 +239,10 @@ export default function ProductionOrders() {
       {/* Orders table */}
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
         <div className="hidden md:grid grid-cols-12 gap-2 text-[11px] text-gray-600 bg-gray-50 border-b px-3 py-2">
-          <div className="col-span-4">Orden</div>
+          <div className="col-span-3">Orden</div>
           <div className="col-span-2">Cotización</div>
-          <div className="col-span-2">Fecha</div>
+          <div className="col-span-2">Vendedor</div>
+          <div className="col-span-1">Fecha</div>
           <div className="col-span-2">Estado</div>
           <div className="col-span-2 text-right">Acciones</div>
         </div>
@@ -180,7 +252,7 @@ export default function ProductionOrders() {
         <div className="divide-y">
           {orders.map(order => (
             <div key={order.id} className="grid md:grid-cols-12 gap-2 px-3 py-3 items-center">
-              <div className="md:col-span-4">
+              <div className="md:col-span-3">
                 <div className="text-sm font-medium text-gray-900 truncate">{order.title}</div>
                 <a href={order.pdfUrl} target="_blank" rel="noreferrer" className="text-[11px] text-blue-600 hover:underline truncate">{order.pdfName}</a>
                 <div className="mt-2">
@@ -194,7 +266,8 @@ export default function ProductionOrders() {
                 </div>
               </div>
               <div className="md:col-span-2 text-[12px] text-gray-700">{order.quoteNumber || '—'}</div>
-              <div className="md:col-span-2 text-[12px] text-gray-700">{new Date(order.createdAt).toLocaleDateString()}</div>
+              <div className="md:col-span-2 text-[12px] text-gray-700">{order.vendorName || '—'}</div>
+              <div className="md:col-span-1 text-[12px] text-gray-700">{new Date(order.createdAt).toLocaleDateString()}</div>
               <div className="md:col-span-2">
                 <select value={order.status} onChange={e => updateStatus(order.id, e.target.value as ProductionStatus)} className="w-full border rounded px-2 py-1 text-xs bg-white text-black focus:bg-white focus:text-black focus-visible:outline focus-visible:outline-1 focus-visible:outline-black">
                   {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}

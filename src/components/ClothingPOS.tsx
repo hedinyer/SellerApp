@@ -21,6 +21,9 @@ interface VariantStock {
   color: string
   size: string
   qty: number
+  id?: string // ID original del garment para esta variante
+  sku?: string // SKU original del garment para esta variante
+  imageUrl?: string // Imagen del producto para este color
 }
 
 interface GarmentItem {
@@ -120,6 +123,7 @@ export function ClothingPOS() {
   
 
   const [inventory, setInventory] = useState<GarmentItem[]>(loadInventory())
+  const [allGarments, setAllGarments] = useState<GarmentRecord[]>([]) // Store all original garments for stock updates
   const [sales, setSales] = useState<SaleRecord[]>(loadSales())
 
   const [query, setQuery] = useState('')
@@ -133,6 +137,7 @@ export function ClothingPOS() {
 
   const [variantPicker, setVariantPicker] = useState<{ item: GarmentItem } | null>(null)
   const [selectedVariant, setSelectedVariant] = useState<{ color: string; size: string } | null>(null)
+  const [isProcessingSale, setIsProcessingSale] = useState(false)
 
   const [showCheckout, setShowCheckout] = useState(false)
   const [customer, setCustomer] = useState<CustomerRef>({})
@@ -238,7 +243,7 @@ export function ClothingPOS() {
     }
   }, [couponCode, cart])
 
-  // Load garments from database and group variants by SKU
+  // Load garments from database and group variants by name
   useEffect(() => {
     async function loadFromDb() {
       const { data, error } = await supabase
@@ -247,16 +252,57 @@ export function ClothingPOS() {
         .order('created_at', { ascending: false })
       if (error || !data) return
 
-      const items: GarmentItem[] = (data as unknown as GarmentRecord[]).map(g => ({
-        id: g.id,
-        name: g.name,
-        sku: g.sku,
-        category: g.category,
-        price: Number(g.price) || 0,
-        status: (g.status === 'inactivo' ? 'inactivo' : 'activo'),
-        imageUrl: g.image_url || undefined,
-        variants: [{ color: g.color, size: g.size, qty: g.qty }]
-      }))
+      // Store all original garments
+      const allGarmentsData = data as unknown as GarmentRecord[]
+      setAllGarments(allGarmentsData)
+      
+      // Group garments by name
+      const groupedMap = new Map<string, GarmentItem>()
+      
+      allGarmentsData.forEach(g => {
+        const name = g.name
+        const price = Number(g.price) || 0
+        const status = (g.status === 'inactivo' ? 'inactivo' : 'activo')
+        
+        if (groupedMap.has(name)) {
+          // Add variant to existing product
+          const existing = groupedMap.get(name)!
+          existing.variants = existing.variants || []
+          existing.variants.push({ 
+            color: g.color, 
+            size: g.size, 
+            qty: g.qty,
+            id: g.id,
+            sku: g.sku,
+            imageUrl: g.image_url || undefined
+          })
+          // Use first available image if current doesn't have one
+          if (!existing.imageUrl && g.image_url) {
+            existing.imageUrl = g.image_url
+          }
+        } else {
+          // Create new grouped product
+          groupedMap.set(name, {
+            id: g.id, // Use first ID as representative
+            name: name,
+            sku: g.sku, // Use first SKU as representative
+            category: g.category,
+            price: price,
+            status: status,
+            imageUrl: g.image_url || undefined,
+            variants: [{ 
+              color: g.color, 
+              size: g.size, 
+              qty: g.qty,
+              id: g.id,
+              sku: g.sku,
+              imageUrl: g.image_url || undefined
+            }]
+          })
+        }
+      })
+      
+      const items: GarmentItem[] = Array.from(groupedMap.values())
       setInventory(items)
       try { localStorage.setItem(INVENTORY_KEY, JSON.stringify(items)) } catch {}
     }
@@ -317,11 +363,13 @@ export function ClothingPOS() {
   const totalToPay = Math.max(0, subtotal - discountTotal)
 
   function addToCartFromItem(item: GarmentItem) {
+    // Always show variant picker if there are variants (which there should be after grouping by name)
     if (item.variants && item.variants.length > 0) {
       setVariantPicker({ item })
       setSelectedVariant(null)
       return
     }
+    // Fallback for items without variants (shouldn't happen after grouping)
     const line: CartLine = {
       id: `${item.id}`,
       itemId: item.id,
@@ -337,15 +385,27 @@ export function ClothingPOS() {
   function upsertCart(line: CartLine) {
     // Obtener stock disponible para esta línea (variante)
     const getAvailableFor = (ln: CartLine): number => {
+      // Try to find by variant ID first (for grouped items)
+      if (ln.variantLabel) {
+        const [color, size] = ln.variantLabel.split(' / ')
+        // Search in all grouped items for the matching variant
+        for (const item of inventory) {
+          const variant = item.variants?.find(v => 
+            v.color === color && 
+            v.size === size && 
+            (v.id === ln.itemId || item.id === ln.itemId)
+          )
+          if (variant) {
+            return Math.max(0, Number(variant.qty || 0))
+          }
+        }
+      }
+      // Fallback: find by item ID
       const item = inventory.find(it => it.id === ln.itemId)
       if (!item) return Infinity
-      if (ln.variantLabel && item.variants && item.variants.length > 0) {
-        const [color, size] = ln.variantLabel.split(' / ')
-        const v = item.variants.find(v => v.color === color && v.size === size)
-        return v ? Math.max(0, Number(v.qty || 0)) : 0
+      if (item.variants && item.variants.length > 0) {
+        return Math.max(0, Number(item.variants[0].qty || 0))
       }
-      // Si no hay variantes, no limitamos aquí (o usar primera variante si existe)
-      if (item.variants && item.variants.length > 0) return Math.max(0, Number(item.variants[0].qty || 0))
       return Infinity
     }
 
@@ -367,16 +427,23 @@ export function ClothingPOS() {
   function confirmVariantAdd() {
     if (!variantPicker || !selectedVariant) return
     const item = variantPicker.item
-    const stock = item.variants?.find(v => v.color === selectedVariant.color && v.size === selectedVariant.size)?.qty || 0
-    if (stock <= 0) return
+    const variant = item.variants?.find(v => v.color === selectedVariant.color && v.size === selectedVariant.size)
+    if (!variant || variant.qty <= 0) return
+    
+    // Use the specific variant ID if available, otherwise use the item ID
+    const variantId = variant.id || item.id
+    const variantSku = variant.sku || item.sku
+    // Use the variant's image if available, otherwise fallback to item image
+    const variantImageUrl = variant.imageUrl || item.imageUrl
+    
     const line: CartLine = {
-      id: `${item.id}-${selectedVariant.color}-${selectedVariant.size}`,
-      itemId: item.id,
+      id: `${variantId}-${selectedVariant.color}-${selectedVariant.size}`,
+      itemId: variantId, // Use the specific variant ID
       name: item.name,
-      sku: item.sku,
+      sku: variantSku, // Use the specific variant SKU
       unitPrice: item.price,
       quantity: 1,
-      imageUrl: item.imageUrl,
+      imageUrl: variantImageUrl, // Use the variant's image
       variantLabel: `${selectedVariant.color} / ${selectedVariant.size}`
     }
     upsertCart(line)
@@ -388,14 +455,24 @@ export function ClothingPOS() {
     setCart(prev => prev.map(l => {
       if (l.id !== lineId) return l
       // Calcular stock disponible para esta línea
-      const item = inventory.find(it => it.id === l.itemId)
       let available = Infinity
-      if (item) {
-        if (l.variantLabel && item.variants && item.variants.length > 0) {
-          const [color, size] = l.variantLabel.split(' / ')
-          const v = item.variants.find(v => v.color === color && v.size === size)
-          available = v ? Math.max(0, Number(v.qty || 0)) : 0
-        } else if (item.variants && item.variants.length > 0) {
+      if (l.variantLabel) {
+        const [color, size] = l.variantLabel.split(' / ')
+        // Search in all grouped items for the matching variant
+        for (const item of inventory) {
+          const variant = item.variants?.find(v => 
+            v.color === color && 
+            v.size === size && 
+            (v.id === l.itemId || item.id === l.itemId)
+          )
+          if (variant) {
+            available = Math.max(0, Number(variant.qty || 0))
+            break
+          }
+        }
+      } else {
+        const item = inventory.find(it => it.id === l.itemId)
+        if (item && item.variants && item.variants.length > 0) {
           available = Math.max(0, Number(item.variants[0].qty || 0))
         }
       }
@@ -431,13 +508,33 @@ export function ClothingPOS() {
   function openCheckout() {
     // Validate stock in real-time before checkout
     for (const l of cart) {
-      const item = inventory.find(it => it.id === l.itemId)
-      if (!item) continue
-      if (item.variants && l.variantLabel) {
+      if (l.variantLabel) {
         const [color, size] = l.variantLabel.split(' / ')
-        const vs = item.variants.find(v => v.color === color && v.size === size)
-        if (!vs || vs.qty < l.quantity) {
-          alert(`¡Atención! La variante ${l.variantLabel} de ${item.name} ya no tiene stock suficiente.`)
+        // Search in all grouped items for the matching variant
+        let found = false
+        for (const item of inventory) {
+          const variant = item.variants?.find(v => 
+            v.color === color && 
+            v.size === size && 
+            (v.id === l.itemId || item.id === l.itemId)
+          )
+          if (variant) {
+            if (variant.qty < l.quantity) {
+              alert(`¡Atención! La variante ${l.variantLabel} de ${item.name} ya no tiene stock suficiente.`)
+              return
+            }
+            found = true
+            break
+          }
+        }
+        if (!found) {
+          alert(`¡Atención! No se encontró la variante ${l.variantLabel} de ${l.name}.`)
+          return
+        }
+      } else {
+        const item = inventory.find(it => it.id === l.itemId)
+        if (!item) {
+          alert(`¡Atención! No se encontró el producto ${l.name}.`)
           return
         }
       }
@@ -682,33 +779,84 @@ export function ClothingPOS() {
   }
 
   function finalizeSale() {
+    // Prevent double-click
+    if (isProcessingSale) return
+    
+    setIsProcessingSale(true)
+    
     // Final stock validation and deduction
     const updated = [...inventory]
+    const updatesToDb: { id: string; qty: number }[] = []
+    
     for (const l of cart) {
-      const itemIdx = updated.findIndex(it => it.id === l.itemId)
-      if (itemIdx < 0) continue
-      const item = updated[itemIdx]
-      if (item.variants && l.variantLabel) {
+      if (l.variantLabel) {
         const [color, size] = l.variantLabel.split(' / ')
-        const vIdx = item.variants.findIndex(v => v.color === color && v.size === size)
-        if (vIdx < 0 || item.variants[vIdx].qty < l.quantity) {
-          alert(`¡Atención! La variante ${l.variantLabel} de ${item.name} ya no está disponible.`)
+        // Search in all grouped items for the matching variant
+        let found = false
+        for (let itemIdx = 0; itemIdx < updated.length; itemIdx++) {
+          const item = updated[itemIdx]
+          const variant = item.variants?.find(v => 
+            v.color === color && 
+            v.size === size && 
+            (v.id === l.itemId || item.id === l.itemId)
+          )
+          if (variant) {
+            if (variant.qty < l.quantity) {
+              alert(`¡Atención! La variante ${l.variantLabel} de ${item.name} ya no está disponible.`)
+              setIsProcessingSale(false)
+              return
+            }
+            // Update variant stock
+            variant.qty = variant.qty - l.quantity
+            // Store update for database
+            if (variant.id) {
+              updatesToDb.push({ id: variant.id, qty: variant.qty })
+            }
+            updated[itemIdx] = { ...item }
+            found = true
+            break
+          }
+        }
+        if (!found) {
+          alert(`¡Atención! No se encontró la variante ${l.variantLabel} de ${l.name}.`)
+          setIsProcessingSale(false)
           return
         }
-        item.variants[vIdx] = { ...item.variants[vIdx], qty: item.variants[vIdx].qty - l.quantity }
-        updated[itemIdx] = { ...item }
+      } else {
+        const itemIdx = updated.findIndex(it => it.id === l.itemId)
+        if (itemIdx < 0) {
+          alert(`¡Atención! No se encontró el producto ${l.name}.`)
+          setIsProcessingSale(false)
+          return
+        }
+        const item = updated[itemIdx]
+        if (item.variants && item.variants.length > 0) {
+          const variant = item.variants[0]
+          if (variant.qty < l.quantity) {
+            alert(`¡Atención! El producto ${item.name} ya no tiene stock suficiente.`)
+            setIsProcessingSale(false)
+            return
+          }
+          variant.qty = variant.qty - l.quantity
+          if (variant.id) {
+            updatesToDb.push({ id: variant.id, qty: variant.qty })
+          }
+          updated[itemIdx] = { ...item }
+        }
       }
     }
 
-    // Validate mandatory customer fields (except email)
-    if (!customer.name || !customer.phone || !customer.cedula) {
-      alert('Por favor completa nombre, teléfono y cédula del cliente.')
+    // Validate mandatory customer fields (only name is required)
+    if (!customer.name) {
+      alert('Por favor completa el nombre del cliente.')
+      setIsProcessingSale(false)
       return
     }
 
     const paySum = totalPayments(paymentParts)
     if (Math.round(paySum * 100) !== Math.round(totalToPay * 100)) {
       alert('El total de pagos no coincide con el total a pagar.')
+      setIsProcessingSale(false)
       return
     }
 
@@ -731,6 +879,7 @@ export function ClothingPOS() {
         .single()
       if (error || !data) {
         alert('No se pudo registrar la venta. Intenta de nuevo.')
+        setIsProcessingSale(false)
         return
       }
       const r = data as unknown as DbSaleRow
@@ -746,7 +895,15 @@ export function ClothingPOS() {
         seller: r.seller || undefined
       }
 
-      // Reducir stock en base de datos por cada línea vendida
+      // Update stock in database using variant IDs
+      for (const update of updatesToDb) {
+        await supabase
+          .from('garments')
+          .update({ qty: update.qty, updated_at: new Date().toISOString() })
+          .eq('id', update.id)
+      }
+      
+      // Reducir stock en base de datos por cada línea vendida (legacy code - puede eliminarse si ya funciona con updatesToDb)
       try {
         for (const l of cart) {
           const sku = l.sku
@@ -801,6 +958,7 @@ export function ClothingPOS() {
       setSales(prev => [sale, ...prev].slice(0, 50))
       setShowCheckout(false)
       clearCart()
+      setIsProcessingSale(false) // Re-enable button after successful sale
     })()
   }
 
@@ -832,16 +990,16 @@ export function ClothingPOS() {
       if (!w) return
       
       const itemsHtml = sale.items.map(l => `
-        <tr style="border-bottom: 1px solid #e5e7eb;">
-          <td style="padding: 10px 0; font-size: 14px; color: #111827;">
-            <div style="font-weight: 500; margin-bottom: 2px;">${l.name}</div>
-            ${l.variantLabel ? `<div style="font-size: 12px; color: #6b7280;">${l.variantLabel}</div>` : ''}
-            <div style="font-size: 12px; color: #9ca3af;">SKU: ${l.sku}</div>
+        <tr style="border-bottom: 1px solid #f3f4f6;">
+          <td style="padding: 6px 0; font-size: 10px; color: #111827;">
+            <div style="font-weight: 500; margin-bottom: 1px;">${l.name}</div>
+            ${l.variantLabel ? `<div style="font-size: 9px; color: #6b7280; margin-bottom: 1px;">${l.variantLabel}</div>` : ''}
+            <div style="font-size: 8px; color: #9ca3af;">SKU: ${l.sku}</div>
           </td>
-          <td style="padding: 10px 8px; text-align: center; font-size: 14px; color: #111827; font-weight: 500;">
+          <td style="padding: 6px 4px; text-align: center; font-size: 10px; color: #111827; font-weight: 500;">
             x${l.quantity}
           </td>
-          <td style="padding: 10px 0; text-align: right; font-size: 14px; color: #111827; font-weight: 600;">
+          <td style="padding: 6px 0; text-align: right; font-size: 10px; color: #111827; font-weight: 600;">
             ${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(l.unitPrice * l.quantity)}
           </td>
         </tr>
@@ -856,7 +1014,7 @@ export function ClothingPOS() {
           'store-credit': 'Crédito interno'
         }
         return `
-          <div style="display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px;">
+          <div style="display: flex; justify-content: space-between; padding: 3px 0; font-size: 10px;">
             <span style="color: #6b7280; text-transform: capitalize;">${methodNames[p.method] || p.method}:</span>
             <span style="font-weight: 600; color: #111827;">${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(p.amount)}</span>
           </div>
@@ -864,13 +1022,31 @@ export function ClothingPOS() {
       }).join('')
       
       const customerInfo = sale.customer ? `
-        <div style="margin-top: 24px; padding-top: 20px; border-top: 2px solid #e5e7eb;">
-          <div style="font-size: 12px; color: #6b7280; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">Información del Cliente</div>
-          <div style="font-size: 13px; color: #111827; line-height: 1.8;">
-            <div><strong>Nombre:</strong> ${sale.customer.name || '—'}</div>
-            ${sale.customer.phone ? `<div><strong>Teléfono:</strong> ${sale.customer.phone}</div>` : ''}
-            ${sale.customer.cedula ? `<div><strong>Cédula:</strong> ${sale.customer.cedula}</div>` : ''}
-            ${sale.customer.email ? `<div><strong>Email:</strong> ${sale.customer.email}</div>` : ''}
+        <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb;">
+          <div style="font-size: 9px; color: #6b7280; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.3px;">Información del Cliente</div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; font-size: 10px; color: #111827;">
+            <div>
+              <span style="color: #6b7280; font-weight: 500;">Nombre:</span>
+              <span style="font-weight: 500; margin-left: 4px;">${sale.customer.name || '—'}</span>
+            </div>
+            ${sale.customer.phone ? `
+            <div>
+              <span style="color: #6b7280; font-weight: 500;">Teléfono:</span>
+              <span style="font-weight: 500; margin-left: 4px;">${sale.customer.phone}</span>
+            </div>
+            ` : '<div></div>'}
+            ${sale.customer.cedula ? `
+            <div>
+              <span style="color: #6b7280; font-weight: 500;">Cédula:</span>
+              <span style="font-weight: 500; margin-left: 4px;">${sale.customer.cedula}</span>
+            </div>
+            ` : ''}
+            ${sale.customer.email ? `
+            <div>
+              <span style="color: #6b7280; font-weight: 500;">Email:</span>
+              <span style="font-weight: 500; margin-left: 4px;">${sale.customer.email}</span>
+            </div>
+            ` : ''}
           </div>
         </div>
       ` : ''
@@ -899,50 +1075,50 @@ export function ClothingPOS() {
               font-family: 'Helvetica Neue', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
               background: #ffffff;
               color: #111827;
-              line-height: 1.5;
+              line-height: 1.4;
             }
             .container {
               max-width: 600px;
               margin: 0 auto;
-              padding: 32px;
+              padding: 20px;
               background: white;
             }
             .header {
               display: flex;
               align-items: center;
-              margin-bottom: 32px;
-              padding-bottom: 24px;
-              border-bottom: 2px solid #e5e7eb;
+              margin-bottom: 16px;
+              padding-bottom: 12px;
+              border-bottom: 1px solid #e5e7eb;
             }
             .logo {
-              width: 80px;
-              height: 80px;
+              width: 50px;
+              height: 50px;
               object-fit: contain;
-              margin-right: 20px;
+              margin-right: 12px;
             }
             .header-text {
               flex: 1;
             }
             .header-title {
-              font-size: 24px;
+              font-size: 18px;
               font-weight: 700;
               color: #111827;
-              margin-bottom: 4px;
-              letter-spacing: -0.5px;
+              margin-bottom: 2px;
+              letter-spacing: -0.3px;
             }
             .header-subtitle {
-              font-size: 13px;
+              font-size: 10px;
               color: #6b7280;
               font-weight: 500;
             }
             .info-section {
-              margin-bottom: 24px;
+              margin-bottom: 12px;
             }
             .info-row {
               display: flex;
               justify-content: space-between;
-              padding: 8px 0;
-              font-size: 13px;
+              padding: 4px 0;
+              font-size: 10px;
             }
             .info-label {
               color: #6b7280;
@@ -955,20 +1131,20 @@ export function ClothingPOS() {
             .items-table {
               width: 100%;
               border-collapse: collapse;
-              margin: 24px 0;
+              margin: 12px 0;
             }
             .items-table thead {
               background: #f9fafb;
-              border-bottom: 2px solid #e5e7eb;
+              border-bottom: 1px solid #e5e7eb;
             }
             .items-table th {
-              padding: 12px 0;
+              padding: 6px 0;
               text-align: left;
-              font-size: 11px;
+              font-size: 9px;
               font-weight: 600;
               color: #6b7280;
               text-transform: uppercase;
-              letter-spacing: 0.5px;
+              letter-spacing: 0.3px;
             }
             .items-table th:last-child {
               text-align: right;
@@ -976,22 +1152,26 @@ export function ClothingPOS() {
             .items-table th:nth-child(2) {
               text-align: center;
             }
+            .items-table td {
+              padding: 6px 0;
+              font-size: 10px;
+            }
             .totals {
-              margin-top: 24px;
-              padding-top: 20px;
-              border-top: 2px solid #e5e7eb;
+              margin-top: 12px;
+              padding-top: 12px;
+              border-top: 1px solid #e5e7eb;
             }
             .total-row {
               display: flex;
               justify-content: space-between;
-              padding: 8px 0;
-              font-size: 14px;
+              padding: 4px 0;
+              font-size: 11px;
             }
             .total-row.final {
-              margin-top: 12px;
-              padding-top: 16px;
+              margin-top: 8px;
+              padding-top: 8px;
               border-top: 1px solid #e5e7eb;
-              font-size: 20px;
+              font-size: 14px;
               font-weight: 700;
               color: #111827;
             }
@@ -1009,24 +1189,24 @@ export function ClothingPOS() {
               font-weight: 700;
             }
             .payments-section {
-              margin-top: 20px;
-              padding-top: 20px;
+              margin-top: 12px;
+              padding-top: 12px;
               border-top: 1px solid #e5e7eb;
             }
             .payments-title {
-              font-size: 12px;
+              font-size: 10px;
               color: #6b7280;
               font-weight: 600;
-              margin-bottom: 12px;
+              margin-bottom: 8px;
               text-transform: uppercase;
-              letter-spacing: 0.5px;
+              letter-spacing: 0.3px;
             }
             .footer {
-              margin-top: 32px;
-              padding-top: 24px;
+              margin-top: 16px;
+              padding-top: 12px;
               border-top: 1px dashed #d1d5db;
               text-align: center;
-              font-size: 11px;
+              font-size: 9px;
               color: #9ca3af;
             }
             @media print {
@@ -1035,11 +1215,11 @@ export function ClothingPOS() {
                 padding: 0;
               }
               .container {
-                padding: 24px;
+                padding: 16px;
                 max-width: 100%;
               }
               @page {
-                margin: 0.5cm;
+                margin: 0.8cm;
               }
             }
           </style>
@@ -1106,10 +1286,22 @@ export function ClothingPOS() {
             
             ${customerInfo}
             
+            <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid #e5e7eb;">
+              <div style="text-align: center; margin-bottom: 8px;">
+                <h3 style="font-size: 12px; font-weight: 700; color: #111827; margin-bottom: 4px; letter-spacing: 0.5px;">DWELL ROPA DEPORTIVA</h3>
+                <p style="font-size: 9px; color: #4b5563; line-height: 1.4; margin-bottom: 6px;">
+                  Somos una empresa Santandereana especializada en ropa deportiva premium y de alto rendimiento, fabricada con las mejores textiles del mercado y con la mejor calidad garantizada.
+                </p>
+                <div style="margin-top: 6px; font-size: 8px; color: #9ca3af;">
+                  <a href="https://dwell.com.co/" style="color: #6b7280; text-decoration: none;">www.dwell.com.co</a>
+                </div>
+              </div>
+            </div>
+            
             <div class="footer">
-              <div>Gracias por su compra</div>
-              <div style="margin-top: 4px;">Este documento es válido como comprobante de pago</div>
-              <div style="margin-top: 4px; font-size: 10px; color: #6b7280;">
+              <div style="font-size: 9px;">Gracias por su compra</div>
+              <div style="margin-top: 2px; font-size: 8px;">Este documento es válido como comprobante de pago</div>
+              <div style="margin-top: 2px; font-size: 8px; color: #6b7280;">
                 Cambios solo por talla, no devolución de dinero. Garantía de dos meses por prenda.
               </div>
             </div>
@@ -1361,10 +1553,42 @@ export function ClothingPOS() {
             {/* Colors */}
             <div className="mb-2">
               <div className="text-xs text-black mb-1">Color</div>
-              <div className="flex flex-wrap gap-2">
-                {Array.from(new Set((variantPicker.item.variants || []).map(v => v.color))).map(color => (
-                  <button key={color} onClick={() => setSelectedVariant(v => ({ color, size: v?.size || '' }))} className={`px-2 py-1 border rounded ${selectedVariant?.color === color ? 'bg-black text-white' : ''}`}>{color}</button>
-                ))}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {Array.from(new Set((variantPicker.item.variants || []).map(v => v.color))).map(color => {
+                  // Get the first variant image for this color
+                  const colorVariant = (variantPicker.item.variants || []).find(v => v.color === color)
+                  const colorImageUrl = colorVariant?.imageUrl || variantPicker.item.imageUrl
+                  const isSelected = selectedVariant?.color === color
+                  return (
+                    <button 
+                      key={color} 
+                      onClick={() => setSelectedVariant(v => ({ color, size: v?.size || '' }))} 
+                      className={`border rounded overflow-hidden ${isSelected ? 'ring-2 ring-black ring-offset-1' : ''} hover:shadow-md transition-all`}
+                    >
+                      {colorImageUrl ? (
+                        <div className="relative">
+                          <img 
+                            src={colorImageUrl} 
+                            alt={color} 
+                            className="w-full h-20 sm:h-24 object-cover"
+                          />
+                          {isSelected && (
+                            <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
+                              <div className="bg-black text-white px-2 py-1 rounded text-xs font-medium">✓</div>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="w-full h-20 sm:h-24 bg-gray-100 flex items-center justify-center">
+                          <span className="text-xs text-gray-500">Sin imagen</span>
+                        </div>
+                      )}
+                      <div className={`p-1.5 text-center text-xs font-medium ${isSelected ? 'bg-black text-white' : 'bg-white text-black'}`}>
+                        {color}
+                      </div>
+                    </button>
+                  )
+                })}
               </div>
             </div>
             {/* Sizes */}
@@ -1392,83 +1616,164 @@ export function ClothingPOS() {
 
       {/* Checkout modal */}
       {showCheckout && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-2 sm:p-3">
-          <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-2 sm:pb-3 mb-2 sm:mb-3 border-b border-gray-100 p-3 sm:p-4 sticky top-0 bg-white z-10">
-              <div className="font-semibold flex items-center gap-2 text-sm sm:text-base text-black"><DollarSignIcon size={16} className="sm:w-[18px] sm:h-[18px]" /> Finalizar venta</div>
-              <button onClick={() => setShowCheckout(false)} className="text-gray-700 hover:text-black"><XIcon size={16} className="sm:w-[18px] sm:h-[18px]" /></button>
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[95vh] overflow-hidden flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-white">
+              <div className="flex-1"></div>
+              <div className="flex-1 text-center">
+                <h2 className="text-lg font-semibold text-gray-900">Finalizar Venta</h2>
+                <p className="text-xs text-gray-500">Complete la información del cliente y el pago</p>
+              </div>
+              <div className="flex-1 flex justify-end">
+                <button 
+                  onClick={() => setShowCheckout(false)} 
+                  className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors"
+                >
+                  <XIcon size={18} className="text-gray-500" />
+                </button>
+              </div>
             </div>
-            <div className="p-3 sm:p-4 space-y-2 sm:space-y-3">
-              {/* Cliente (Fila 1) */}
-              <div className="border rounded p-2">
-                <div className="text-sm font-medium mb-2 flex items-center gap-2"><UserIcon size={16} /> Cliente</div>
-                <div className="flex items-center gap-2 mb-2">
-                  <input value={customer.name || ''} onChange={e => setCustomer(prev => ({ ...prev, name: e.target.value }))} placeholder="Nombre" className="flex-1 border rounded px-2 py-1 bg-white text-black" />
-                  <input value={customer.phone || ''} onChange={e => setCustomer(prev => ({ ...prev, phone: e.target.value }))} placeholder="Teléfono" className="w-40 border rounded px-2 py-1 bg-white text-black" />
-                </div>
-                <div className="flex items-center gap-2 mb-2">
-                  <input value={customer.email || ''} onChange={e => setCustomer(prev => ({ ...prev, email: e.target.value }))} placeholder="Correo (opcional)" className="flex-1 border rounded px-2 py-1 bg-white text-black" />
-                  <input value={customer.cedula || ''} onChange={e => setCustomer(prev => ({ ...prev, cedula: e.target.value }))} placeholder="Cédula" className="w-40 border rounded px-2 py-1 bg-white text-black" />
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+              {/* Información del Cliente */}
+              <div className="bg-white rounded-xl border border-gray-200 p-5">
+                <h3 className="text-sm font-semibold text-gray-900 mb-4">
+                  Información del Cliente
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1.5">Nombre *</label>
+                    <input 
+                      value={customer.name || ''} 
+                      onChange={e => setCustomer(prev => ({ ...prev, name: e.target.value }))} 
+                      placeholder="Nombre completo del cliente" 
+                      className="w-full border border-gray-300 rounded-lg px-4 py-2.5 bg-white text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1.5">Teléfono (opcional)</label>
+                    <input 
+                      value={customer.phone || ''} 
+                      onChange={e => setCustomer(prev => ({ ...prev, phone: e.target.value }))} 
+                      placeholder="Número de teléfono" 
+                      className="w-full border border-gray-300 rounded-lg px-4 py-2.5 bg-white text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1.5">Correo (opcional)</label>
+                    <input 
+                      value={customer.email || ''} 
+                      onChange={e => setCustomer(prev => ({ ...prev, email: e.target.value }))} 
+                      placeholder="correo@ejemplo.com" 
+                      className="w-full border border-gray-300 rounded-lg px-4 py-2.5 bg-white text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1.5">Cédula (opcional)</label>
+                    <input 
+                      value={customer.cedula || ''} 
+                      onChange={e => setCustomer(prev => ({ ...prev, cedula: e.target.value }))} 
+                      placeholder="Número de cédula" 
+                      className="w-full border border-gray-300 rounded-lg px-4 py-2.5 bg-white text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" 
+                    />
+                  </div>
                 </div>
               </div>
 
-              {/* Pago (Fila 2) */}
-              <div className="border rounded p-2">
-                <div className="text-sm font-medium mb-2 flex items-center gap-2"><DollarSignIcon size={16} /> Pago</div>
-                <div className="space-y-2">
+              {/* Métodos de Pago */}
+              <div className="bg-white rounded-xl border border-gray-200 p-5">
+                <h3 className="text-sm font-semibold text-gray-900 mb-4">
+                  Métodos de Pago
+                </h3>
+                <div className="space-y-3 mb-4">
                   {paymentParts.map((p, i) => (
-                    <div key={i} className="flex items-center gap-2">
-                      <select value={p.method} onChange={e => updatePayment(i, { method: e.target.value as PaymentMethod })} className="border rounded px-2 py-1 bg-white text-black">
-                        <option value="cash">Efectivo</option>
-                        <option value="card">Tarjeta</option>
-                        <option value="transfer">Transferencia</option>
-                        <option value="voucher">Vale</option>
-                        <option value="store-credit">Crédito interno</option>
+                    <div key={i} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                      <select 
+                        value={p.method} 
+                        onChange={e => updatePayment(i, { method: e.target.value as PaymentMethod })} 
+                        className="flex-shrink-0 border border-gray-300 rounded-lg px-4 py-2.5 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm font-medium"
+                      >
+                        <option value="cash">💵 Efectivo</option>
+                        <option value="card">💳 Tarjeta</option>
+                        <option value="transfer">📱 Transferencia</option>
+                        <option value="voucher">🎫 Vale</option>
+                        <option value="store-credit">📝 Crédito interno</option>
                       </select>
                       <input 
                         type="text" 
                         value={formatNumberWithSeparators(p.amount)} 
                         onChange={e => handlePaymentAmountChange(i, e.target.value)} 
                         placeholder="0" 
-                        className="flex-1 border rounded px-2 py-1 bg-white text-black" 
+                        className="flex-1 border border-gray-300 rounded-lg px-4 py-2.5 bg-white text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-right font-semibold" 
                       />
-                      <button className="text-red-600" onClick={() => removePayment(i)}><XIcon size={16} /></button>
+                      {paymentParts.length > 1 && (
+                        <button 
+                          onClick={() => removePayment(i)} 
+                          className="w-9 h-9 rounded-lg hover:bg-red-50 flex items-center justify-center transition-colors text-red-500 hover:text-red-600"
+                        >
+                          <XIcon size={18} />
+                        </button>
+                      )}
                     </div>
                   ))}
-                  <button className="border rounded px-2 py-1 text-sm" onClick={addPaymentPart}>Agregar pago</button>
+                  <button 
+                    onClick={addPaymentPart} 
+                    className="w-full border-2 border-dashed border-gray-300 rounded-lg px-4 py-2.5 text-sm font-medium text-gray-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
+                  >
+                    + Agregar otro método de pago
+                  </button>
                 </div>
-                <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm text-black">
-                  <div>Total a pagar: <span className="font-semibold">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(totalToPay)}</span></div>
-                  <div>Pagado: <span className="font-semibold">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(totalPayments(paymentParts))}</span></div>
-                  <div>Cambio: <span className="font-semibold">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Math.max(0, totalPayments(paymentParts) - totalToPay))}</span></div>
-                </div>
-              </div>
-
-              {/* Resumen de la compra (Fila 3) */}
-              <div className="border rounded p-2 text-sm">
-                <div className="text-sm font-medium mb-2">Resumen de la compra</div>
-                <div className="grid grid-cols-4 font-medium text-black border-b pb-1 mb-1"><div>Producto</div><div>Variante</div><div>Cant</div><div>Total</div></div>
-                <div className="max-h-56 overflow-auto pr-1">
-                  {cart.map(l => (
-                    <div key={l.id} className="grid grid-cols-4 py-0.5">
-                      <div className="truncate">{l.name}</div>
-                      <div className="truncate">{l.variantLabel || '-'}</div>
-                      <div>x{l.quantity}</div>
-                      <div className="text-right">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(l.unitPrice * l.quantity)}</div>
+                
+                {/* Resumen de pagos */}
+                <div className="pt-4 border-t border-gray-200 space-y-2">
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-gray-600">Total a pagar:</span>
+                    <span className="font-semibold text-gray-900">
+                      {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(totalToPay)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-gray-600">Total pagado:</span>
+                    <span className={`font-semibold ${totalPayments(paymentParts) >= totalToPay ? 'text-green-600' : 'text-orange-600'}`}>
+                      {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(totalPayments(paymentParts))}
+                    </span>
+                  </div>
+                  {totalPayments(paymentParts) > totalToPay && (
+                    <div className="flex justify-between items-center text-sm pt-2 border-t border-gray-200">
+                      <span className="text-gray-600">Cambio a entregar:</span>
+                      <span className="font-bold text-green-600">
+                        {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Math.max(0, totalPayments(paymentParts) - totalToPay))}
+                      </span>
                     </div>
-                  ))}
-                </div>
-                <div className="mt-2 flex justify-end gap-6">
-                  <div>Desc: {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(discountTotal)}</div>
-                  <div>Total: <span className="font-semibold">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(totalToPay)}</span></div>
+                  )}
                 </div>
               </div>
             </div>
 
-            {/* Actions */}
-            <div className="mt-2 sm:mt-3 pt-2 sm:pt-3 border-t border-gray-100 flex flex-col sm:flex-row sm:justify-end gap-2 p-3 sm:p-4 sticky bottom-0 bg-white">
-              <button className="w-full sm:w-auto px-3 py-2 border rounded text-xs sm:text-sm" onClick={() => setShowCheckout(false)}>Cancelar</button>
-              <button className="w-full sm:w-auto px-3 py-2 border border-black bg-gray-200 hover:bg-gray-300 text-black rounded flex items-center justify-center gap-2 text-xs sm:text-sm" onClick={finalizeSale}><SaveIcon size={14} className="sm:w-4 sm:h-4"/> Confirmar y registrar</button>
+            {/* Footer Actions */}
+            <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex flex-col sm:flex-row justify-end gap-3">
+              <button 
+                onClick={() => setShowCheckout(false)} 
+                className="px-6 py-2.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-white transition-colors"
+              >
+                Cancelar
+              </button>
+              <button 
+                disabled={isProcessingSale || totalPayments(paymentParts) < totalToPay || !customer.name}
+                onClick={finalizeSale} 
+                className={`px-6 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-all ${
+                  isProcessingSale || totalPayments(paymentParts) < totalToPay
+                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
+                    : !customer.name
+                    ? 'bg-blue-400 hover:bg-blue-500 text-white shadow-lg hover:shadow-xl'
+                    : 'bg-black hover:bg-gray-800 text-white shadow-lg hover:shadow-xl'
+                }`}
+              >
+                <SaveIcon size={16} /> 
+                {isProcessingSale ? 'Procesando...' : 'Confirmar y Registrar Venta'}
+              </button>
             </div>
           </div>
         </div>
@@ -1534,11 +1839,11 @@ export function ClothingPOS() {
       {invoiceSale && (
         <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between pb-3 mb-3 border-b border-gray-100 px-6 pt-4">
-              <div className="font-semibold text-black">Factura de venta</div>
-              <button onClick={() => setInvoiceSale(null)} className="text-gray-700 hover:text-black"><XIcon size={18} /></button>
+            <div className="flex items-center justify-between pb-2 mb-2 border-b border-gray-100 px-4 pt-3">
+              <div className="font-semibold text-black text-sm">Factura de venta</div>
+              <button onClick={() => setInvoiceSale(null)} className="text-gray-700 hover:text-black"><XIcon size={16} /></button>
             </div>
-            <div className="flex-1 overflow-y-auto px-6 pb-4" style={{ fontFamily: 'Helvetica Neue, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif' }}>
+            <div className="flex-1 overflow-y-auto px-4 pb-3" style={{ fontFamily: 'Helvetica Neue, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif' }}>
               <style>{`
                 @font-face {
                   font-family: 'Helvetica Neue';
@@ -1549,22 +1854,22 @@ export function ClothingPOS() {
                 }
               `}</style>
               {/* Header with Logo */}
-              <div className="flex items-center mb-6 pb-4 border-b-2 border-gray-200">
-                {logoBase64 && <img src={logoBase64} alt="Dwell Logo" className="w-20 h-20 object-contain mr-5" />}
+              <div className="flex items-center mb-3 pb-2 border-b border-gray-200">
+                {logoBase64 && <img src={logoBase64} alt="Dwell Logo" className="w-12 h-12 object-contain mr-3" />}
                 <div className="flex-1">
-                  <div className="text-2xl font-bold text-gray-900 mb-1" style={{ letterSpacing: '-0.5px' }}>Ticket de Venta</div>
-                  <div className="text-sm text-gray-600 font-medium">Factura #{invoiceSale.id}</div>
+                  <div className="text-lg font-bold text-gray-900 mb-0.5" style={{ letterSpacing: '-0.3px' }}>Ticket de Venta</div>
+                  <div className="text-xs text-gray-600 font-medium">Factura #{invoiceSale.id}</div>
                 </div>
               </div>
 
               {/* Info Section */}
-              <div className="mb-6 space-y-2">
-                <div className="flex justify-between text-sm">
+              <div className="mb-3 space-y-1">
+                <div className="flex justify-between text-xs">
                   <span className="text-gray-600 font-medium">Fecha y Hora:</span>
                   <span className="text-gray-900 font-semibold">{new Date(invoiceSale.at).toLocaleString('es-CO', { dateStyle: 'long', timeStyle: 'short' })}</span>
                 </div>
                 {invoiceSale.seller && (
-                  <div className="flex justify-between text-sm">
+                  <div className="flex justify-between text-xs">
                     <span className="text-gray-600 font-medium">Vendedor:</span>
                     <span className="text-gray-900 font-semibold">{invoiceSale.seller}</span>
                   </div>
@@ -1572,28 +1877,28 @@ export function ClothingPOS() {
               </div>
 
               {/* Items Table */}
-              <table className="w-full border-collapse mb-6">
+              <table className="w-full border-collapse mb-3">
                 <thead>
-                  <tr className="bg-gray-50 border-b-2 border-gray-200">
-                    <th className="py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Producto</th>
-                    <th className="py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Cantidad</th>
-                    <th className="py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Total</th>
+                  <tr className="bg-gray-50 border-b border-gray-200">
+                    <th className="py-1.5 text-left text-[9px] font-semibold text-gray-600 uppercase tracking-wide">Producto</th>
+                    <th className="py-1.5 text-center text-[9px] font-semibold text-gray-600 uppercase tracking-wide">Cantidad</th>
+                    <th className="py-1.5 text-right text-[9px] font-semibold text-gray-600 uppercase tracking-wide">Total</th>
                   </tr>
                 </thead>
                 <tbody>
                   {invoiceSale.items.map((l, i) => (
                     <tr key={i} className="border-b border-gray-100">
-                      <td className="py-3">
-                        <div className="font-medium text-gray-900 mb-1">{l.name}</div>
+                      <td className="py-1.5">
+                        <div className="font-medium text-gray-900 text-xs mb-0.5">{l.name}</div>
                         {l.variantLabel && (
-                          <div className="text-xs text-gray-600 mb-1">{l.variantLabel}</div>
+                          <div className="text-[9px] text-gray-600 mb-0.5">{l.variantLabel}</div>
                         )}
-                        <div className="text-xs text-gray-400">SKU: {l.sku}</div>
+                        <div className="text-[8px] text-gray-400">SKU: {l.sku}</div>
                       </td>
-                      <td className="py-3 text-center font-medium text-gray-900">
+                      <td className="py-1.5 text-center font-medium text-gray-900 text-xs">
                         x{l.quantity}
                       </td>
-                      <td className="py-3 text-right font-semibold text-gray-900">
+                      <td className="py-1.5 text-right font-semibold text-gray-900 text-xs">
                         {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(l.unitPrice * l.quantity)}
                       </td>
                     </tr>
@@ -1602,28 +1907,28 @@ export function ClothingPOS() {
               </table>
 
               {/* Totals */}
-              <div className="mb-6 pt-4 border-t-2 border-gray-200">
-                <div className="flex justify-between py-2 text-sm">
+              <div className="mb-3 pt-2 border-t border-gray-200">
+                <div className="flex justify-between py-1 text-xs">
                   <span className="text-gray-600 font-medium">Subtotal:</span>
                   <span className="text-gray-900 font-semibold">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(invoiceSale.subtotal)}</span>
                 </div>
                 {invoiceSale.discount > 0 && (
-                  <div className="flex justify-between py-2 text-sm">
+                  <div className="flex justify-between py-1 text-xs">
                     <span className="text-gray-600 font-medium">Descuento:</span>
                     <span className="text-red-600 font-semibold">-{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(invoiceSale.discount)}</span>
                   </div>
                 )}
-                <div className="flex justify-between py-3 mt-2 pt-4 border-t border-gray-200">
-                  <span className="text-lg font-bold text-gray-900">Total a Pagar:</span>
-                  <span className="text-xl font-bold text-gray-900">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(invoiceSale.total)}</span>
+                <div className="flex justify-between py-2 mt-1 pt-2 border-t border-gray-200">
+                  <span className="text-sm font-bold text-gray-900">Total a Pagar:</span>
+                  <span className="text-base font-bold text-gray-900">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(invoiceSale.total)}</span>
                 </div>
               </div>
 
               {/* Payments */}
               {invoiceSale.payments.length > 0 && (
-                <div className="mb-6 pt-4 border-t border-gray-200">
-                  <div className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-3">Métodos de Pago</div>
-                  <div className="space-y-2">
+                <div className="mb-3 pt-2 border-t border-gray-200">
+                  <div className="text-[9px] font-semibold text-gray-600 uppercase tracking-wide mb-2">Métodos de Pago</div>
+                  <div className="space-y-1">
                     {invoiceSale.payments.map((p, i) => {
                       const methodNames: Record<string, string> = {
                         'cash': 'Efectivo',
@@ -1633,7 +1938,7 @@ export function ClothingPOS() {
                         'store-credit': 'Crédito interno'
                       }
                       return (
-                        <div key={i} className="flex justify-between text-sm">
+                        <div key={i} className="flex justify-between text-xs">
                           <span className="text-gray-600 capitalize">{methodNames[p.method] || p.method}:</span>
                           <span className="font-semibold text-gray-900">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(p.amount)}</span>
                         </div>
@@ -1645,31 +1950,62 @@ export function ClothingPOS() {
 
               {/* Customer Info */}
               {invoiceSale.customer && (
-                <div className="mb-6 pt-4 border-t-2 border-gray-200">
-                  <div className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-3">Información del Cliente</div>
-                  <div className="space-y-2 text-sm text-gray-900">
-                    <div><strong>Nombre:</strong> {invoiceSale.customer.name || '—'}</div>
-                    {invoiceSale.customer.phone && <div><strong>Teléfono:</strong> {invoiceSale.customer.phone}</div>}
-                    {invoiceSale.customer.cedula && <div><strong>Cédula:</strong> {invoiceSale.customer.cedula}</div>}
-                    {invoiceSale.customer.email && <div><strong>Email:</strong> {invoiceSale.customer.email}</div>}
+                <div className="mb-3 pt-2 border-t border-gray-200">
+                  <div className="text-[9px] font-semibold text-gray-600 uppercase tracking-wide mb-2">Información del Cliente</div>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-900">
+                    <div>
+                      <span className="text-gray-600 font-medium">Nombre:</span>
+                      <span className="ml-1 font-medium">{invoiceSale.customer.name || '—'}</span>
+                    </div>
+                    {invoiceSale.customer.phone && (
+                      <div>
+                        <span className="text-gray-600 font-medium">Teléfono:</span>
+                        <span className="ml-1 font-medium">{invoiceSale.customer.phone}</span>
+                      </div>
+                    )}
+                    {invoiceSale.customer.cedula && (
+                      <div>
+                        <span className="text-gray-600 font-medium">Cédula:</span>
+                        <span className="ml-1 font-medium">{invoiceSale.customer.cedula}</span>
+                      </div>
+                    )}
+                    {invoiceSale.customer.email && (
+                      <div>
+                        <span className="text-gray-600 font-medium">Email:</span>
+                        <span className="ml-1 font-medium">{invoiceSale.customer.email}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
 
+              {/* Company Info */}
+              <div className="mb-3 pt-2 border-t border-gray-200">
+                <div className="text-center">
+                  <h3 className="text-xs font-bold text-gray-900 mb-1" style={{ letterSpacing: '0.5px' }}>DWELL ROPA DEPORTIVA</h3>
+                  <p className="text-[9px] text-gray-600 leading-relaxed mb-2">
+                    Somos una empresa Santandereana especializada en ropa deportiva premium y de alto rendimiento, fabricada con las mejores textiles del mercado y con la mejor calidad garantizada.
+                  </p>
+                  <div className="text-[8px] text-gray-500">
+                    <a href="https://dwell.com.co/" className="text-gray-600 hover:underline">www.dwell.com.co</a>
+                  </div>
+                </div>
+              </div>
+
               {/* Footer */}
-              <div className="pt-4 border-t border-dashed border-gray-300 text-center text-xs text-gray-400">
+              <div className="pt-2 border-t border-dashed border-gray-300 text-center text-[9px] text-gray-400">
                 <div>Gracias por su compra</div>
-                <div className="mt-1">Este documento es válido como comprobante de pago</div>
-                <div className="mt-1 text-[10px] text-gray-500">
+                <div className="mt-0.5">Este documento es válido como comprobante de pago</div>
+                <div className="mt-0.5 text-[8px] text-gray-500">
                   Cambios solo por talla, no devolución de dinero. Garantía de dos meses por prenda.
                 </div>
               </div>
             </div>
             
             {/* Actions */}
-            <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100">
-              <button className="px-4 py-2 border rounded text-gray-700 hover:bg-gray-50" onClick={() => setInvoiceSale(null)}>Cerrar</button>
-              <button className="px-4 py-2 border border-black bg-gray-200 hover:bg-gray-300 text-black rounded" onClick={() => printInvoice(invoiceSale)}>Imprimir</button>
+            <div className="flex justify-end gap-2 px-4 py-3 border-t border-gray-100">
+              <button className="px-3 py-1.5 border rounded text-gray-700 hover:bg-gray-50 text-xs" onClick={() => setInvoiceSale(null)}>Cerrar</button>
+              <button className="px-3 py-1.5 border border-black bg-gray-200 hover:bg-gray-300 text-black rounded text-xs" onClick={() => printInvoice(invoiceSale)}>Imprimir</button>
             </div>
           </div>
         </div>

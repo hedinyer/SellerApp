@@ -108,7 +108,6 @@ export function PaymentHistory() {
   const [methodFilter, setMethodFilter] = useState<string>('all')
   const [sellerFilter, setSellerFilter] = useState<string>('all')
   const [customerFilter, setCustomerFilter] = useState<string>('')
-  const [statusFilter, setStatusFilter] = useState<string>('all')
   // Selecciones y modales
   const [selectedSale, setSelectedSale] = useState<SaleRecord | null>(null)
   const [isDetailOpen, setIsDetailOpen] = useState(false)
@@ -153,6 +152,13 @@ export function PaymentHistory() {
     }
     loadLogo()
   }, [])
+
+  // Helper function to get first name only
+  const getFirstName = (fullName: string | undefined | null): string => {
+    if (!fullName) return '—'
+    const parts = fullName.trim().split(/\s+/)
+    return parts[0] || fullName
+  }
 
   const formatNumber = (value: number | string) => {
     const num = Number(value)
@@ -216,6 +222,7 @@ export function PaymentHistory() {
         payments: DbPaymentPart[]
         customer: DbCustomer | null
         seller: string | null
+        status?: string
       }
 
       function mapMethod(parts: DbPaymentPart[]): { method: PaymentMethod; detail?: string } {
@@ -259,7 +266,7 @@ export function PaymentHistory() {
           totalPaid: Number(r.total) || 0,
           paymentMethod: methodInfo.method,
           paymentDetail: methodInfo.detail,
-          status: 'completada',
+          status: (r.status as SaleStatus) || 'completada',
           payments: r.payments || []
         }
         return sr
@@ -286,10 +293,9 @@ export function PaymentHistory() {
       const matchesCustomer = !customerFilter ||
         (sale.customer?.name && sale.customer.name.toLowerCase().includes(customerFilter.toLowerCase())) ||
         (sale.customer?.phone && sale.customer.phone.toLowerCase().includes(customerFilter.toLowerCase()))
-      const matchesStatus = statusFilter === 'all' || sale.status === statusFilter
-      return withinFrom && withinTo && matchesFolio && matchesMethod && matchesSeller && matchesCustomer && matchesStatus
+      return withinFrom && withinTo && matchesFolio && matchesMethod && matchesSeller && matchesCustomer
     })
-  }, [salesHistory, dateFrom, dateTo, folioSearch, methodFilter, sellerFilter, customerFilter, statusFilter])
+  }, [salesHistory, dateFrom, dateTo, folioSearch, methodFilter, sellerFilter, customerFilter])
 
   // Estadísticas
   const totalRevenue = filteredSales.reduce((sum, s) => sum + (s.status !== 'anulada' ? s.totalPaid : 0), 0)
@@ -354,7 +360,30 @@ export function PaymentHistory() {
     setMethodFilter('all')
     setSellerFilter('all')
     setCustomerFilter('')
-    setStatusFilter('all')
+  }
+
+  const updateSaleStatus = async (saleId: string, newStatus: SaleStatus) => {
+    try {
+      // Actualizar en Supabase
+      const { error } = await supabase
+        .from('sales')
+        .update({ status: newStatus })
+        .eq('id', saleId)
+      
+      if (error) {
+        console.error('Error updating sale status:', error)
+        alert('Error al actualizar el estado de la venta')
+        return
+      }
+
+      // Actualizar en el estado local
+      setSalesHistory(prev => prev.map(sale => 
+        sale.id === saleId ? { ...sale, status: newStatus } : sale
+      ))
+    } catch (error) {
+      console.error('Error updating sale status:', error)
+      alert('Error al actualizar el estado de la venta')
+    }
   }
 
   const printInvoice = (sale: SaleRecord) => {
@@ -363,20 +392,21 @@ export function PaymentHistory() {
       if (!w) return
       
       const itemsHtml = sale.items.map(l => `
-        <tr style="border-bottom: 1px solid #e5e7eb;">
-          <td style="padding: 10px 0; font-size: 14px; color: #111827;">
-            <div style="font-weight: 500; margin-bottom: 2px;">${l.name}</div>
-            ${l.variant ? `<div style=\"font-size: 12px; color: #6b7280;\">${l.variant}</div>` : ''}
+        <tr style="border-bottom: 1px solid #f3f4f6;">
+          <td style="padding: 6px 0; font-size: 10px; color: #111827;">
+            <div style="font-weight: 500; margin-bottom: 1px;">${l.name}</div>
+            ${l.variant ? `<div style="font-size: 9px; color: #6b7280; margin-bottom: 1px;">${l.variant}</div>` : ''}
+            <div style="font-size: 8px; color: #9ca3af;">SKU: ${l.id}</div>
           </td>
-          <td style="padding: 10px 8px; text-align: center; font-size: 14px; color: #111827; font-weight: 500;">
+          <td style="padding: 6px 4px; text-align: center; font-size: 10px; color: #111827; font-weight: 500;">
             x${l.quantity}
           </td>
-          <td style="padding: 10px 0; text-align: right; font-size: 14px; color: #111827; font-weight: 600;">
+          <td style="padding: 6px 0; text-align: right; font-size: 10px; color: #111827; font-weight: 600;">
             ${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(l.unitPrice * l.quantity)}
           </td>
         </tr>
       `).join('')
-
+      
       const paymentsHtml = (sale.payments || []).map((p) => {
         const methodNames: Record<string, string> = {
           'cash': 'Efectivo',
@@ -386,23 +416,31 @@ export function PaymentHistory() {
           'store-credit': 'Crédito interno'
         }
         return `
-          <div style="display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px;">
+          <div style="display: flex; justify-content: space-between; padding: 3px 0; font-size: 10px;">
             <span style="color: #6b7280; text-transform: capitalize;">${methodNames[p.method] || p.method}:</span>
             <span style="font-weight: 600; color: #111827;">${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(p.amount)}</span>
           </div>
         `
       }).join('')
-
+      
       const customerInfo = sale.customer ? `
-        <div style="margin-top: 24px; padding-top: 20px; border-top: 2px solid #e5e7eb;">
-          <div style="font-size: 12px; color: #6b7280; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">Información del Cliente</div>
-          <div style="font-size: 13px; color: #111827; line-height: 1.8;">
-            <div><strong>Nombre:</strong> ${sale.customer.name || '—'}</div>
-            ${sale.customer.phone ? `<div><strong>Teléfono:</strong> ${sale.customer.phone}</div>` : ''}
+        <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb;">
+          <div style="font-size: 9px; color: #6b7280; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.3px;">Información del Cliente</div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; font-size: 10px; color: #111827;">
+            <div>
+              <span style="color: #6b7280; font-weight: 500;">Nombre:</span>
+              <span style="font-weight: 500; margin-left: 4px;">${sale.customer.name || '—'}</span>
+            </div>
+            ${sale.customer.phone ? `
+            <div>
+              <span style="color: #6b7280; font-weight: 500;">Teléfono:</span>
+              <span style="font-weight: 500; margin-left: 4px;">${sale.customer.phone}</span>
+            </div>
+            ` : '<div></div>'}
           </div>
         </div>
       ` : ''
-
+      
       w.document.write(`
         <!DOCTYPE html>
         <html>
@@ -418,24 +456,162 @@ export function PaymentHistory() {
               font-style: normal;
               font-display: swap;
             }
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { font-family: 'Helvetica Neue', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #ffffff; color: #111827; line-height: 1.5; }
-            .container { max-width: 600px; margin: 0 auto; padding: 32px; background: white; }
-            .header { display: flex; align-items: center; margin-bottom: 32px; padding-bottom: 24px; border-bottom: 2px solid #e5e7eb; }
-            .logo { width: 80px; height: 80px; object-fit: contain; margin-right: 20px; }
-            .header-text { flex: 1; }
-            .header-title { font-size: 24px; font-weight: 700; color: #111827; margin-bottom: 4px; letter-spacing: -0.5px; }
-            .header-subtitle { font-size: 13px; color: #6b7280; font-weight: 500; }
-            .items-table { width: 100%; border-collapse: collapse; margin: 24px 0; }
-            .items-table thead { background: #f9fafb; border-bottom: 2px solid #e5e7eb; }
-            .items-table th { padding: 12px 0; text-align: left; font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; }
-            .items-table th:last-child { text-align: right; }
-            .items-table th:nth-child(2) { text-align: center; }
-            .totals { margin-top: 24px; padding-top: 20px; border-top: 2px solid #e5e7eb; }
-            .total-row { display: flex; justify-content: space-between; padding: 8px 0; font-size: 14px; }
-            .total-row.final { margin-top: 12px; padding-top: 16px; border-top: 1px solid #e5e7eb; font-size: 20px; font-weight: 700; color: #111827; }
-            .payments-title { font-size: 12px; color: #6b7280; font-weight: 600; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
-            @media print { .container { padding: 24px; max-width: 100%; } @page { margin: 0.5cm; } }
+            * {
+              margin: 0;
+              padding: 0;
+              box-sizing: border-box;
+            }
+            body {
+              font-family: 'Helvetica Neue', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              background: #ffffff;
+              color: #111827;
+              line-height: 1.4;
+            }
+            .container {
+              max-width: 600px;
+              margin: 0 auto;
+              padding: 20px;
+              background: white;
+            }
+            .header {
+              display: flex;
+              align-items: center;
+              margin-bottom: 16px;
+              padding-bottom: 12px;
+              border-bottom: 1px solid #e5e7eb;
+            }
+            .logo {
+              width: 50px;
+              height: 50px;
+              object-fit: contain;
+              margin-right: 12px;
+            }
+            .header-text {
+              flex: 1;
+            }
+            .header-title {
+              font-size: 18px;
+              font-weight: 700;
+              color: #111827;
+              margin-bottom: 2px;
+              letter-spacing: -0.3px;
+            }
+            .header-subtitle {
+              font-size: 10px;
+              color: #6b7280;
+              font-weight: 500;
+            }
+            .info-section {
+              margin-bottom: 12px;
+            }
+            .info-row {
+              display: flex;
+              justify-content: space-between;
+              padding: 4px 0;
+              font-size: 10px;
+            }
+            .info-label {
+              color: #6b7280;
+              font-weight: 500;
+            }
+            .info-value {
+              color: #111827;
+              font-weight: 600;
+            }
+            .items-table {
+              width: 100%;
+              border-collapse: collapse;
+              margin: 12px 0;
+            }
+            .items-table thead {
+              background: #f9fafb;
+              border-bottom: 1px solid #e5e7eb;
+            }
+            .items-table th {
+              padding: 6px 0;
+              text-align: left;
+              font-size: 9px;
+              font-weight: 600;
+              color: #6b7280;
+              text-transform: uppercase;
+              letter-spacing: 0.3px;
+            }
+            .items-table th:last-child {
+              text-align: right;
+            }
+            .items-table th:nth-child(2) {
+              text-align: center;
+            }
+            .items-table td {
+              padding: 6px 0;
+              font-size: 10px;
+            }
+            .totals {
+              margin-top: 12px;
+              padding-top: 12px;
+              border-top: 1px solid #e5e7eb;
+            }
+            .total-row {
+              display: flex;
+              justify-content: space-between;
+              padding: 4px 0;
+              font-size: 11px;
+            }
+            .total-row.final {
+              margin-top: 8px;
+              padding-top: 8px;
+              border-top: 1px solid #e5e7eb;
+              font-size: 14px;
+              font-weight: 700;
+              color: #111827;
+            }
+            .total-label {
+              color: #6b7280;
+              font-weight: 500;
+            }
+            .total-value {
+              color: #111827;
+              font-weight: 600;
+            }
+            .total-row.final .total-label,
+            .total-row.final .total-value {
+              color: #111827;
+              font-weight: 700;
+            }
+            .payments-section {
+              margin-top: 12px;
+              padding-top: 12px;
+              border-top: 1px solid #e5e7eb;
+            }
+            .payments-title {
+              font-size: 10px;
+              color: #6b7280;
+              font-weight: 600;
+              margin-bottom: 8px;
+              text-transform: uppercase;
+              letter-spacing: 0.3px;
+            }
+            .footer {
+              margin-top: 16px;
+              padding-top: 12px;
+              border-top: 1px dashed #d1d5db;
+              text-align: center;
+              font-size: 9px;
+              color: #9ca3af;
+            }
+            @media print {
+              body {
+                margin: 0;
+                padding: 0;
+              }
+              .container {
+                padding: 16px;
+                max-width: 100%;
+              }
+              @page {
+                margin: 0.8cm;
+              }
+            }
           </style>
         </head>
         <body>
@@ -447,12 +623,20 @@ export function PaymentHistory() {
                 <div class="header-subtitle">Factura #${sale.id}</div>
               </div>
             </div>
+            
             <div class="info-section">
-              <div class="info-row" style="display:flex;justify-content:space-between;padding:8px 0;font-size:13px;">
-                <span class="info-label" style="color:#6b7280;font-weight:500;">Fecha y Hora:</span>
-                <span class="info-value" style="color:#111827;font-weight:600;">${sale.date} ${sale.time}</span>
+              <div class="info-row">
+                <span class="info-label">Fecha y Hora:</span>
+                <span class="info-value">${new Date(`${sale.date}T${sale.time}`).toLocaleString('es-CO', { dateStyle: 'long', timeStyle: 'short' })}</span>
               </div>
+              ${sale.seller ? `
+              <div class="info-row">
+                <span class="info-label">Vendedor:</span>
+                <span class="info-value">${sale.seller}</span>
+              </div>
+              ` : ''}
             </div>
+            
             <table class="items-table">
               <thead>
                 <tr>
@@ -465,15 +649,16 @@ export function PaymentHistory() {
                 ${itemsHtml}
               </tbody>
             </table>
+            
             <div class="totals">
               <div class="total-row">
-                <span class="total-label" style="color:#6b7280;font-weight:500;">Subtotal:</span>
-                <span class="total-value" style="color:#111827;font-weight:600;">${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(sale.subtotal)}</span>
+                <span class="total-label">Subtotal:</span>
+                <span class="total-value">${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(sale.subtotal)}</span>
               </div>
               ${sale.discount ? `
               <div class="total-row">
-                <span class="total-label" style="color:#6b7280;font-weight:500;">Descuento:</span>
-                <span class="total-value" style="color:#dc2626;font-weight:600;">-${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(sale.discount.amount)}</span>
+                <span class="total-label">Descuento:</span>
+                <span class="total-value" style="color: #dc2626;">-${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(sale.discount.amount)}</span>
               </div>
               ` : ''}
               <div class="total-row final">
@@ -481,16 +666,42 @@ export function PaymentHistory() {
                 <span class="total-value">${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(sale.totalPaid)}</span>
               </div>
             </div>
+            
             ${(sale.payments && sale.payments.length > 0) ? `
-            <div class="payments-section" style="margin-top:20px;padding-top:20px;border-top:1px solid #e5e7eb;">
+            <div class="payments-section">
               <div class="payments-title">Métodos de Pago</div>
               ${paymentsHtml}
-            </div>` : ''}
+            </div>
+            ` : ''}
+            
             ${customerInfo}
+            
+            <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid #e5e7eb;">
+              <div style="text-align: center; margin-bottom: 8px;">
+                <h3 style="font-size: 12px; font-weight: 700; color: #111827; margin-bottom: 4px; letter-spacing: 0.5px;">DWELL ROPA DEPORTIVA</h3>
+                <p style="font-size: 9px; color: #4b5563; line-height: 1.4; margin-bottom: 6px;">
+                  Somos una empresa Santandereana especializada en ropa deportiva premium y de alto rendimiento, fabricada con las mejores textiles del mercado y con la mejor calidad garantizada.
+                </p>
+                <div style="margin-top: 6px; font-size: 8px; color: #9ca3af;">
+                  <a href="https://dwell.com.co/" style="color: #6b7280; text-decoration: none;">www.dwell.com.co</a>
+                </div>
+              </div>
+            </div>
+            
+            <div class="footer">
+              <div style="font-size: 9px;">Gracias por su compra</div>
+              <div style="margin-top: 2px; font-size: 8px;">Este documento es válido como comprobante de pago</div>
+              <div style="margin-top: 2px; font-size: 8px; color: #6b7280;">
+                Cambios solo por talla, no devolución de dinero. Garantía de dos meses por prenda.
+              </div>
+            </div>
           </div>
           <script>
             window.onload = function() {
-              setTimeout(function() { window.print(); window.close(); }, 300);
+              setTimeout(function() {
+                window.print();
+                window.close();
+              }, 300);
             }
           </script>
         </body>
@@ -620,7 +831,7 @@ export function PaymentHistory() {
                 <h3 className="font-semibold text-black text-xs sm:text-sm">Filtros de Búsqueda</h3>
               </div>
               <div className="flex flex-wrap gap-1.5 sm:gap-2 w-full sm:w-auto">
-                <button onClick={() => {/* Buscar aplica por estado actual */}} className="flex-1 sm:flex-none px-2 sm:px-3 py-1.5 rounded bg-blue-600 text-white text-[10px] sm:text-xs font-bold">Buscar</button>
+                <button onClick={() => {/* Buscar aplica por estado actual */}} className="flex-1 sm:flex-none px-2 sm:px-3 py-1.5 rounded bg-black hover:bg-gray-800 text-white text-[10px] sm:text-xs font-bold transition-colors">Buscar</button>
                 <button onClick={resetFilters} className="flex-1 sm:flex-none px-2 sm:px-3 py-1.5 rounded bg-gray-100 text-gray-800 text-[10px] sm:text-xs font-bold border">Restablecer</button>
                 {user?.role === 'admin' && (
                   <button onClick={exportCSV} className="flex-1 sm:flex-none px-2 sm:px-3 py-1.5 rounded bg-emerald-600 text-white text-[10px] sm:text-xs font-bold">Exportar CSV</button>
@@ -663,16 +874,6 @@ export function PaymentHistory() {
                 <label className="text-[10px] sm:text-xs text-black">Cliente</label>
                 <input type="text" value={customerFilter} onChange={e=>setCustomerFilter(e.target.value)} placeholder="Nombre o teléfono" className="w-full px-2 sm:px-3 py-1.5 sm:py-2 bg-gray-50 border border-gray-200 rounded text-xs sm:text-sm text-black placeholder:text-black" />
               </div>
-              <div>
-                <label className="text-[10px] sm:text-xs text-black">Estado</label>
-                <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} className="w-full px-2 sm:px-3 py-1.5 sm:py-2 bg-gray-50 border border-gray-200 rounded text-xs sm:text-sm text-black">
-                  <option value="all">Todos</option>
-                  <option value="completada">Completada</option>
-                  <option value="pendiente">Pendiente</option>
-                  <option value="devolucion_parcial">Devolución parcial</option>
-                  <option value="anulada">Anulada</option>
-              </select>
-              </div>
             </div>
           </div>
 
@@ -681,14 +882,13 @@ export function PaymentHistory() {
             <table className="w-full min-w-[980px] table-fixed">
               <thead className="bg-gray-50 sticky top-0 z-10">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[140px]">Fecha/Hora</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[100px]">Folio</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[140px]">Vendedor</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[140px]">Cliente</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[140px]">Fecha/Hora</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[100px]">Folio</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[140px]">Vendedor</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[140px]">Cliente</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[80px]">Productos</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[120px]">Total</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[120px]">Método</th>
-                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[100px]">Estado</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[120px]">Total</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[120px]">Método</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[180px]">Acciones</th>
                 </tr>
               </thead>
@@ -698,52 +898,42 @@ export function PaymentHistory() {
                   const isAdmin = user?.role === 'admin'
                   return (
                     <tr key={sale.id} className="hover:bg-gray-50 transition-colors duration-150 animate-slideInUp" style={{ animationDelay: `${(index * 50) + 600}ms` }}>
-                      <td className="px-4 py-4 whitespace-nowrap align-middle">
+                      <td className="px-4 py-4 whitespace-nowrap text-center align-middle">
                         <div className="text-sm text-gray-900">{sale.date}</div>
                         <div className="text-xs text-gray-500">{sale.time}</div>
                       </td>
-                      <td className="px-4 py-4 whitespace-nowrap align-middle">
+                      <td className="px-4 py-4 whitespace-nowrap text-center align-middle">
                         <div className="text-sm font-semibold text-gray-900" title={sale.id}>{sale.id.slice(0, 10)}</div>
                       </td>
-                      <td className="px-4 py-4 whitespace-nowrap align-middle">
-                        <div className="text-sm text-gray-900">{sale.seller}</div>
+                      <td className="px-4 py-4 whitespace-nowrap text-center align-middle">
+                        <div className="text-sm text-gray-900" title={sale.seller}>{getFirstName(sale.seller)}</div>
                       </td>
-                      <td className="px-4 py-4 whitespace-nowrap align-middle">
-                        <div className="text-sm text-gray-900">{sale.customer?.name || 'Anónimo'}</div>
+                      <td className="px-4 py-4 whitespace-nowrap text-center align-middle">
+                        <div className="text-sm text-gray-900" title={sale.customer?.name || 'Anónimo'}>{getFirstName(sale.customer?.name) || 'Anónimo'}</div>
                       </td>
                     <td className="px-4 py-4 whitespace-nowrap text-center align-middle">
                         <div className="text-sm text-gray-900">{productsCount}</div>
                     </td>
-                      <td className="px-4 py-4 whitespace-nowrap text-right align-middle">
+                      <td className="px-4 py-4 whitespace-nowrap text-center align-middle">
                         <div className="text-sm font-bold text-green-600 break-all leading-tight">{formatNumber(sale.totalPaid)}</div>
                     </td>
-                      <td className="px-4 py-4 whitespace-nowrap align-middle">
+                      <td className="px-4 py-4 whitespace-nowrap text-center align-middle">
                         <span className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium border ${getPaymentMethodColor(sale.paymentMethod)}`}>
                           <span className="mr-1">{getPaymentMethodIcon(sale.paymentMethod)}</span>
                           {getPaymentMethodName(sale.paymentMethod)}
                         </span>
                     </td>
                     <td className="px-4 py-4 whitespace-nowrap text-center align-middle">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium border ${
-                          sale.status === 'completada' ? 'bg-emerald-100 text-emerald-800 border-emerald-200' :
-                          sale.status === 'pendiente' ? 'bg-amber-100 text-amber-800 border-amber-200' :
-                          sale.status === 'devolucion_parcial' ? 'bg-indigo-100 text-indigo-800 border-indigo-200' :
-                          'bg-red-100 text-red-800 border-red-200'
-                        }`}>
-                          {sale.status.replace('_',' ')}
-                      </span>
-                    </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-center align-middle">
                         <div className="flex items-center justify-center gap-2">
-                          <button onClick={() => openSaleDetail(sale)} className="bg-blue-500 hover:bg-blue-600 text-white text-xs font-bold py-1.5 px-2 rounded">Ver</button>
-                          <button onClick={() => printInvoice(sale)} className="bg-gray-800 hover:bg-gray-900 text-white text-xs font-bold py-1.5 px-2 rounded">Imprimir</button>
+                          <button onClick={() => openSaleDetail(sale)} className="text-gray-700 underline text-xs">Ver detalle</button>
+                          <button onClick={() => printInvoice(sale)} className="text-blue-600 underline text-xs">Ver PDF</button>
                           {isAdmin && (
                             <>
                               <button onClick={() => openReturn(sale)} className="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold py-1.5 px-2 rounded">Devolución</button>
                               <button disabled className="bg-red-500/70 text-white text-xs font-bold py-1.5 px-2 rounded opacity-60 cursor-not-allowed">Anular</button>
                             </>
                           )}
-                      </div>
+                        </div>
                     </td>
                   </tr>
                   )
@@ -775,26 +965,15 @@ export function PaymentHistory() {
                     <div className="grid grid-cols-2 gap-2 text-xs">
                       <div>
                         <span className="text-gray-600">Vendedor: </span>
-                        <span className="text-gray-800">{sale.seller}</span>
+                        <span className="text-gray-800" title={sale.seller}>{getFirstName(sale.seller)}</span>
                       </div>
                       <div>
                         <span className="text-gray-600">Cliente: </span>
-                        <span className="text-gray-800 truncate block">{sale.customer?.name || 'Anónimo'}</span>
+                        <span className="text-gray-800 truncate block" title={sale.customer?.name || 'Anónimo'}>{getFirstName(sale.customer?.name) || 'Anónimo'}</span>
                       </div>
                       <div>
                         <span className="text-gray-600">Productos: </span>
                         <span className="text-gray-800">{productsCount}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-600">Estado: </span>
-                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${
-                          sale.status === 'completada' ? 'bg-emerald-100 text-emerald-800 border-emerald-200' :
-                          sale.status === 'pendiente' ? 'bg-amber-100 text-amber-800 border-amber-200' :
-                          sale.status === 'devolucion_parcial' ? 'bg-indigo-100 text-indigo-800 border-indigo-200' :
-                          'bg-red-100 text-red-800 border-red-200'
-                        }`}>
-                          {sale.status.replace('_',' ')}
-                        </span>
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-1.5 pt-2 border-t border-gray-100">

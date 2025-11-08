@@ -65,6 +65,7 @@ export function UserInventory() {
   const [formImageFile, setFormImageFile] = useState<File | null>(null)
   const [formImagePreviewUrl, setFormImagePreviewUrl] = useState<string | null>(null)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+  const [formError, setFormError] = useState<string | null>(null)
   const [qrForId, setQrForId] = useState<string | null>(null)
   const [isScanOpen, setIsScanOpen] = useState(false)
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -179,6 +180,7 @@ export function UserInventory() {
     setForm({ status: 'activo', lowStockThreshold: 5 })
     setFormImageFile(null)
     setFormImagePreviewUrl(null)
+    setFormError(null)
     setIsFormOpen(true)
   }
 
@@ -189,13 +191,18 @@ export function UserInventory() {
     setForm({ ...it })
     setFormImageFile(null)
     setFormImagePreviewUrl(null)
+    setFormError(null)
     setIsFormOpen(true)
   }
 
   async function handleSave() {
-    if (!form.name || !form.sku || !form.category || !form.price || Number(form.price) <= 0 || (form.qty ?? -1) < 0) return
-    const skuExists = items.some(i => i.sku.toLowerCase() === (form.sku || '').toLowerCase() && i.id !== editingId)
-    if (skuExists) return
+    setFormError(null)
+    
+    // Validaciones
+    if (!form.name || !form.sku || !form.category || !form.price || Number(form.price) <= 0 || (form.qty ?? -1) < 0) {
+      setFormError('Por favor completa todos los campos requeridos y verifica que el precio sea mayor a 0 y el stock sea 0 o mayor.')
+      return
+    }
 
     setIsLoading(true)
     try {
@@ -223,24 +230,26 @@ export function UserInventory() {
           updated_at: new Date().toISOString()
         }
         const { error } = await supabase.from('garments').update(payload).eq('id', editingId)
-        if (!error) {
-          setItems(items.map(i => i.id === editingId ? {
-            ...(i as GarmentItem),
-            name: payload.name,
-            sku: payload.sku,
-            category: payload.category,
-            brand: payload.brand || undefined,
-            color: payload.color,
-            size: payload.size,
-            price: payload.price,
-            cost: payload.cost || undefined,
-            status: payload.status,
-            qty: payload.qty,
-            lowStockThreshold: payload.low_stock_threshold,
-            imageUrl: imageUrl,
-            description: payload.description || undefined
-          } : i))
+        if (error) {
+          setFormError(`Error al guardar: ${error.message || 'Error desconocido'}`)
+          return
         }
+        setItems(items.map(i => i.id === editingId ? {
+          ...(i as GarmentItem),
+          name: payload.name,
+          sku: payload.sku,
+          category: payload.category,
+          brand: payload.brand || undefined,
+          color: payload.color,
+          size: payload.size,
+          price: payload.price,
+          cost: payload.cost || undefined,
+          status: payload.status,
+          qty: payload.qty,
+          lowStockThreshold: payload.low_stock_threshold,
+          imageUrl: imageUrl,
+          description: payload.description || undefined
+        } : i))
       } else {
         const payload = {
           name: form.name!,
@@ -258,7 +267,11 @@ export function UserInventory() {
           description: form.description || null
         }
         const { data, error } = await supabase.from('garments').insert(payload).select().single()
-        if (!error && data) {
+        if (error) {
+          setFormError(`Error al guardar: ${error.message || 'Error desconocido'}`)
+          return
+        }
+        if (data) {
           const g = data as GarmentRecord
           const newItem: GarmentItem = {
             id: g.id,
@@ -279,11 +292,16 @@ export function UserInventory() {
           setItems([newItem, ...items])
         }
       }
-    } finally {
-      setIsLoading(false)
+      
+      // Solo cerrar el formulario si todo fue exitoso
       setIsFormOpen(false)
       setEditingId(null)
       setFormImageFile(null)
+      setFormError(null)
+    } catch (error: any) {
+      setFormError(`Error inesperado: ${error.message || 'Error desconocido'}`)
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -577,9 +595,9 @@ export function UserInventory() {
           <div className="p-2 sm:p-3 border-b border-gray-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
             <div className="text-xs sm:text-sm text-gray-600">{filtered.length} resultados • Página {page} de {totalPages}</div>
             <div className="flex items-center gap-2 text-xs sm:text-sm">
-              <span className="hidden sm:inline">Filas:</span>
-              <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(1) }} className="border rounded px-2 py-1 bg-white text-xs sm:text-sm">
-                {[10,20,50].map(n => <option key={n} value={n}>{n}</option>)}
+              <span className="hidden sm:inline text-black">Filas:</span>
+              <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(1) }} className="border rounded px-2 py-1 bg-white text-black text-xs sm:text-sm">
+                {[10,20,50,100,200].map(n => <option key={n} value={n} className="text-black">{n}</option>)}
               </select>
             </div>
           </div>
@@ -716,9 +734,9 @@ export function UserInventory() {
           <div className="p-2 sm:p-3 border-t border-gray-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs sm:text-sm">
             <div className="text-gray-600">Mostrando {(page-1)*pageSize + 1}-{Math.min(page*pageSize, filtered.length)} de {filtered.length}</div>
             <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
-              <button disabled={page<=1} onClick={() => setPage(p => Math.max(1, p-1))} className="px-3 py-1.5 border rounded disabled:opacity-50 text-xs sm:text-sm">Anterior</button>
-              <span className="text-xs sm:text-sm">Página {page} / {totalPages}</span>
-              <button disabled={page>=totalPages} onClick={() => setPage(p => Math.min(totalPages, p+1))} className="px-3 py-1.5 border rounded disabled:opacity-50 text-xs sm:text-sm">Siguiente</button>
+              <button disabled={page<=1} onClick={() => setPage(p => Math.max(1, p-1))} className="px-3 py-1.5 border rounded disabled:opacity-50 text-xs sm:text-sm text-black">Anterior</button>
+              <span className="text-xs sm:text-sm text-black">Página {page} / {totalPages}</span>
+              <button disabled={page>=totalPages} onClick={() => setPage(p => Math.min(totalPages, p+1))} className="px-3 py-1.5 border rounded disabled:opacity-50 text-xs sm:text-sm text-black">Siguiente</button>
             </div>
           </div>
         </div>
@@ -732,7 +750,7 @@ export function UserInventory() {
                   <h3 className="font-bold text-sm sm:text-base text-black">{editingId ? 'Editar prenda' : 'Agregar nueva prenda'}</h3>
                   <p className="text-[10px] sm:text-xs text-gray-600">Completa los campos requeridos</p>
                 </div>
-                <button onClick={() => { setIsFormOpen(false); setEditingId(null) }} className="text-gray-500 hover:text-gray-800"><XIcon size={18} className="sm:w-5 sm:h-5" /></button>
+                <button onClick={() => { setIsFormOpen(false); setEditingId(null); setFormError(null) }} className="text-gray-500 hover:text-gray-800"><XIcon size={18} className="sm:w-5 sm:h-5" /></button>
               </div>
               <div className="p-3 sm:p-4 grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3">
                 <div>
@@ -804,11 +822,22 @@ export function UserInventory() {
                   </div>
                 </div>
               </div>
+              {formError && (
+                <div className="px-3 sm:px-4 pt-2">
+                  <div className="bg-red-50 border border-red-200 rounded p-3 flex items-start gap-2">
+                    <AlertTriangleIcon size={16} className="text-red-600 flex-shrink-0 mt-0.5" />
+                    <p className="text-xs sm:text-sm text-red-700 flex-1">{formError}</p>
+                    <button onClick={() => setFormError(null)} className="text-red-600 hover:text-red-800 flex-shrink-0">
+                      <XIcon size={14} />
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="p-3 sm:p-4 border-t border-gray-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 sticky bottom-0 bg-white">
                 <div className="flex items-center gap-2 text-xs sm:text-sm" />
                 <div className="flex items-center gap-2 w-full sm:w-auto">
-                  <button onClick={() => { setIsFormOpen(false); setEditingId(null) }} className="flex-1 sm:flex-none px-3 py-2 border rounded text-gray-700 hover:bg-gray-50 flex items-center justify-center gap-1 text-xs sm:text-sm"><XIcon size={14} className="sm:w-4 sm:h-4" /> Cancelar</button>
-                  <button onClick={handleSave} className="flex-1 sm:flex-none px-3 py-2 rounded bg-green-600 text-white hover:bg-green-700 flex items-center justify-center gap-2 text-xs sm:text-sm"><SaveIcon size={14} className="sm:w-4 sm:h-4" /> Guardar</button>
+                  <button onClick={() => { setIsFormOpen(false); setEditingId(null); setFormError(null) }} className="flex-1 sm:flex-none px-3 py-2 border rounded text-gray-700 hover:bg-gray-50 flex items-center justify-center gap-1 text-xs sm:text-sm"><XIcon size={14} className="sm:w-4 sm:h-4" /> Cancelar</button>
+                  <button onClick={handleSave} disabled={isLoading} className="flex-1 sm:flex-none px-3 py-2 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-xs sm:text-sm"><SaveIcon size={14} className="sm:w-4 sm:h-4" /> {isLoading ? 'Guardando...' : 'Guardar'}</button>
                 </div>
               </div>
             </div>

@@ -190,7 +190,6 @@ export function Dashboard() {
           const crit = (garmentsData as any[])
             .filter(g => typeof g.qty === 'number' && typeof g.low_stock_threshold === 'number' && g.qty < g.low_stock_threshold)
             .map(g => ({ name: g.name as string, sku: g.sku as string, qty: Number(g.qty), threshold: Number(g.low_stock_threshold), imageUrl: g.image_url as string | undefined }))
-            .slice(0, 20)
           setInventoryCritical(crit)
           ;(window as any).__garmentMetaBySku = metaBySku
         }
@@ -310,9 +309,9 @@ export function Dashboard() {
             <p className="text-[10px] sm:text-xs text-gray-600">Productos por debajo del umbral</p>
           </div>
           {/* Desktop Table View */}
-          <div className="hidden md:block p-4 overflow-x-auto">
+          <div className="hidden md:block p-4 overflow-x-auto max-h-[600px] overflow-y-auto">
             <table className="min-w-full text-sm">
-              <thead>
+              <thead className="sticky top-0 bg-white z-10">
                 <tr className="text-gray-600">
                   <th className="py-2 px-4 font-medium text-center align-middle">Producto</th>
                   <th className="py-2 px-4 font-medium text-center align-middle">Nombre</th>
