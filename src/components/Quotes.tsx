@@ -94,6 +94,164 @@ export function Quotes() {
     }
   }
 
+  // Función para imprimir/ver PDF de una cotización guardada
+  function printQuote(quote: SavedQuote) {
+    try {
+      const escapeHtml = (s: string) => (s || '').replace(/</g, '&lt;')
+      const formatNumberPlain = (n: number) => {
+        if (!isFinite(n)) return '0'
+        return new Intl.NumberFormat('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n)
+      }
+
+      const quoteDate = new Date(quote.created_at)
+      const pad = (n: number) => String(n).padStart(2, '0')
+      const formattedDate = `${quoteDate.getFullYear()}-${pad(quoteDate.getMonth() + 1)}-${pad(quoteDate.getDate())} ${pad(quoteDate.getHours())}:${pad(quoteDate.getMinutes())}`
+
+      // Datos del cliente
+      const customerSectionHtml = (() => {
+        if (!quote.datos_cliente) return ''
+        if (quote.datos_cliente.tipo === 'natural') {
+          const lines = [
+            quote.datos_cliente.nombre && `<div><strong>Nombre:</strong> ${escapeHtml(quote.datos_cliente.nombre)}</div>`,
+            quote.datos_cliente.identificacion && `<div><strong>Documento:</strong> ${escapeHtml(quote.datos_cliente.identificacion)}</div>`,
+            quote.datos_cliente.email && `<div><strong>Email:</strong> ${escapeHtml(quote.datos_cliente.email)}</div>`,
+            quote.datos_cliente.telefono && `<div><strong>Teléfono:</strong> ${escapeHtml(quote.datos_cliente.telefono)}</div>`
+          ].filter(Boolean).join('')
+          return lines ? `<div class="section"><div class="section-title">Datos del cliente</div><div style="font-size:14px;color:#111">${lines}</div></div>` : ''
+        }
+        const lines = [
+          quote.datos_cliente.empresa?.nombre && `<div><strong>Empresa:</strong> ${escapeHtml(quote.datos_cliente.empresa.nombre)}</div>`,
+          quote.datos_cliente.empresa?.nit && `<div><strong>NIT:</strong> ${escapeHtml(quote.datos_cliente.empresa.nit)}</div>`,
+          quote.datos_cliente.empresa?.contacto && `<div><strong>Contacto:</strong> ${escapeHtml(quote.datos_cliente.empresa.contacto)}</div>`,
+          quote.datos_cliente.email && `<div><strong>Email:</strong> ${escapeHtml(quote.datos_cliente.email)}</div>`,
+          quote.datos_cliente.telefono && `<div><strong>Teléfono:</strong> ${escapeHtml(quote.datos_cliente.telefono)}</div>`
+        ].filter(Boolean).join('')
+        return lines ? `<div class="section"><div class="section-title">Datos de la empresa</div><div style="font-size:14px;color:#111">${lines}</div></div>` : ''
+      })()
+
+      // Items del pedido
+      const items = quote.resumen_pedido?.items || []
+      const rowsHtml = items.map((it: any, index: number) => {
+        const baseUnit = Math.max(0, (it.precio_unitario || 0) - (it.descuento_unitario || 0))
+        const itemBaseTotal = baseUnit * (it.cantidad || 0)
+        const modsHtml = (it.modificaciones || []).map((mod: any) => {
+          const modSubtotal = Math.max(0, (mod.precio_unitario || 0) * (mod.cantidad || 0))
+          return `<tr>
+                    <td style="padding:6px 8px; border-top:1px solid #eee; font-size:12px; color:#555">— ${mod.nombre || ''}${mod.descripcion ? `: ${escapeHtml(mod.descripcion)}` : ''}</td>
+                    <td style="padding:6px 8px; border-top:1px solid #eee; text-align:right; font-size:12px; color:#555">${formatNumberPlain(mod.precio_unitario || 0)}</td>
+                    <td style="padding:6px 8px; border-top:1px solid #eee; text-align:center; font-size:12px; color:#555">${mod.cantidad || 0}</td>
+                    <td style="padding:6px 8px; border-top:1px solid #eee; text-align:right; font-size:12px; color:#555">${formatNumberPlain(modSubtotal)}</td>
+                  </tr>`
+        }).join('')
+        const imageCell = it.imagen_url ? `<div style="width:48px;height:48px;border-radius:8px;overflow:hidden;border:1px solid #e5e7eb;background:#f3f4f6;margin-right:8px;display:inline-block;vertical-align:middle;"><img src="${it.imagen_url}" style="width:100%;height:100%;object-fit:cover;display:block;" /></div>` : `<div style="width:48px;height:48px;border-radius:8px;border:1px dashed #d1d5db;background:#f9fafb;color:#9ca3af;font-size:10px;display:inline-flex;align-items:center;justify-content:center;margin-right:8px;vertical-align:middle;">IMG</div>`
+        return `<tr>
+                  <td style="padding:10px 8px; border-top:1px solid #e5e7eb; font-weight:600;">
+                    ${imageCell}<span style="vertical-align:middle;">${index + 1}. ${escapeHtml(it.descripcion || 'Prenda')}</span>
+                  </td>
+                  <td style="padding:10px 8px; border-top:1px solid #e5e7eb; text-align:right">${formatNumberPlain(baseUnit)}</td>
+                  <td style="padding:10px 8px; border-top:1px solid #e5e7eb; text-align:center">${it.cantidad || 0}</td>
+                  <td style="padding:10px 8px; border-top:1px solid #e5e7eb; text-align:right; font-weight:700">${formatNumberPlain(itemBaseTotal)}</td>
+                </tr>` + (modsHtml ? modsHtml : '')
+      }).join('')
+
+      // Sección de envío
+      const shippingSectionHtml = (() => {
+        if (!quote.envio) return ''
+        const lines = [
+          quote.envio.destino && `<div><strong>Destino:</strong> ${escapeHtml(quote.envio.destino)}</div>`,
+          isFinite(quote.envio.costo) && (quote.envio.costo > 0) && `<div><strong>Costo de envío:</strong> ${formatNumberPlain(quote.envio.costo)}</div>`
+        ].filter(Boolean).join('')
+        return lines ? `<div class="section"><div class="section-title">Envío</div><div style="font-size:14px;color:#111">${lines}</div></div>` : ''
+      })()
+
+      const html = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cotización</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Ubuntu, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji'; margin: 0; color: #111827; }
+      .container { max-width: 800px; margin: 24px auto; padding: 0 16px; }
+      .card { background: white; border: 1px solid #e5e7eb; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.08); overflow: hidden; }
+      .header { padding: 20px 24px; border-bottom: 1px solid #f3f4f6; display: flex; align-items: center; justify-content: space-between; }
+      .title { font-size: 20px; font-weight: 800; }
+      .meta { font-size: 12px; color: #6b7280; }
+      .section { padding: 16px 24px; }
+      .section-title { font-size: 12px; color: #6b7280; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: .04em; }
+      table { width: 100%; border-collapse: collapse; }
+      .totals { display: flex; justify-content: flex-end; padding: 16px 24px; border-top: 1px solid #f3f4f6; }
+      .total-box { min-width: 260px; }
+      .total-row { display: flex; justify-content: space-between; padding: 6px 0; }
+      .total-row strong { font-weight: 800; }
+      .print-actions { text-align: right; padding: 12px 24px; border-top: 1px solid #f3f4f6; }
+      .btn { display: inline-block; padding: 8px 12px; border-radius: 8px; border: 1px solid #e5e7eb; background: #111827; color: white; text-decoration: none; font-size: 12px; }
+      @media print {
+        .print-actions { display: none; }
+        body { background: white; }
+        .card { box-shadow: none; border: 0; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="card">
+        <div class="header">
+          <div style="display:flex;align-items:center;gap:12px;">
+            ${logoBase64 ? `<img src="${logoBase64}" alt="Logo" style="height:28px;width:auto;border-radius:6px;" />` : ''}
+            <div>
+              <div class="title">Cotización</div>
+              <div class="meta">N°: ${quote.numero_cotizacion || '—'} | Fecha: ${formattedDate}</div>
+            </div>
+          </div>
+        </div>
+        ${customerSectionHtml}
+        ${shippingSectionHtml}
+        ${quote.notas_cliente ? `<div class="section"><div class="section-title">Detalle del cliente</div><div style="white-space: pre-wrap; font-size: 14px; color:#111">${escapeHtml(quote.notas_cliente)}</div></div>` : ''}
+        <div class="section">
+          <div class="section-title">Detalle de prendas</div>
+          <table>
+            <thead>
+              <tr>
+                <th style="text-align:left; padding:8px; font-size:12px; color:#6b7280">Descripción</th>
+                <th style="text-align:right; padding:8px; font-size:12px; color:#6b7280">Valor unit.</th>
+                <th style="text-align:center; padding:8px; font-size:12px; color:#6b7280">Cant</th>
+                <th style="text-align:right; padding:8px; font-size:12px; color:#6b7280">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml || `<tr><td colspan="4" style="padding:12px; text-align:center; color:#6b7280;">Sin prendas</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+        <div class="totals">
+          <div class="total-box">
+            <div class="total-row"><span>Subtotal</span><span><strong>${formatNumberPlain(quote.subtotal || 0)}</strong></span></div>
+            ${(quote.costo_envio || 0) > 0 ? `<div class="total-row"><span>Envío</span><span><strong>${formatNumberPlain(quote.costo_envio || 0)}</strong></span></div>` : ''}
+            <div class="total-row"><span><strong>Total</strong></span><span><strong>${formatNumberPlain(quote.total || 0)}</strong></span></div>
+          </div>
+        </div>
+        <div class="print-actions">
+          <button class="btn" onclick="window.print()">Imprimir / Guardar como PDF</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>`
+
+      const w = window.open('', '_blank')
+      if (!w) return
+      w.document.open()
+      w.document.write(html)
+      w.document.close()
+      w.focus()
+    } catch (error) {
+      console.error('Error al generar PDF de cotización:', error)
+      alert('Error al generar el PDF. Por favor, intenta de nuevo.')
+    }
+  }
+
   // Cargar logo como base64
   useEffect(() => {
     async function loadLogo() {
@@ -154,16 +312,17 @@ export function Quotes() {
   const [invQuery, setInvQuery] = useState('')
   const [showInventoryPicker, setShowInventoryPicker] = useState(false)
 
-  // Lock background scroll when modal is open so the backdrop covers entire page
+      // Lock background scroll when modal is open so the backdrop covers entire page
   useEffect(() => {
     if (showInventoryPicker || selectedQuote) {
       const previousOverflow = document.body.style.overflow
       document.body.style.overflow = 'hidden'
       // Calcular posición del modal basada en el scroll actual
-      const scrollY = window.scrollY
+      const scrollY = window.scrollY || window.pageYOffset
       const viewportHeight = window.innerHeight
-      const centerY = scrollY + viewportHeight / 2
-      setModalPosition({ top: Math.max(32, centerY) })
+      // Centrar en el viewport visible, no en toda la página
+      const centerY = scrollY + (viewportHeight / 2)
+      setModalPosition({ top: centerY })
       return () => {
         document.body.style.overflow = previousOverflow
       }
@@ -1291,13 +1450,11 @@ export function Quotes() {
                       <td className="px-3 sm:px-4 py-2 sm:py-3 text-xs sm:text-sm text-gray-600">
                         {fecha}
                       </td>
-                      <td className="px-3 sm:px-4 py-2 sm:py-3 text-center">
-                        <button
-                          onClick={() => setSelectedQuote(quote)}
-                          className="inline-flex items-center px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition-colors"
-                        >
-                          Ver detalles
-                        </button>
+                      <td className="px-4 py-4 whitespace-nowrap text-center align-middle">
+                        <div className="flex items-center justify-center gap-2">
+                          <button onClick={() => setSelectedQuote(quote)} className="text-gray-700 underline text-xs">Ver detalle</button>
+                          <button onClick={() => printQuote(quote)} className="text-blue-600 underline text-xs">Ver PDF</button>
+                        </div>
                       </td>
                     </tr>
                   )
@@ -1310,227 +1467,153 @@ export function Quotes() {
 
       {/* Modal de detalles de cotización */}
       {selectedQuote && (
-        <>
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50" onClick={() => setSelectedQuote(null)}></div>
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          {/* Blur overlay */}
+          <div className="fixed inset-0 bg-white/20 backdrop-blur-[2px] z-0 transition-all duration-300" onClick={() => setSelectedQuote(null)}></div>
+          {/* Contenedor centrado en viewport visible */}
           <div 
-            className="fixed left-0 right-0 z-50 flex justify-center p-2 sm:p-4 pointer-events-none overflow-y-auto"
+            className="absolute left-0 right-0 flex items-center justify-center p-2 sm:p-4 lg:p-6 z-10"
             style={{ 
               top: `${modalPosition.top}px`,
               transform: 'translateY(-50%)'
             }}
           >
-            <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto pointer-events-auto">
-              <div className="sticky top-0 bg-white border-b border-gray-200 px-4 sm:px-6 py-4 flex items-center justify-between z-10">
-                <div>
-                  <h3 className="text-lg sm:text-xl font-semibold text-gray-900">Detalle de cotización</h3>
-                  <p className="text-xs sm:text-sm text-gray-600 mt-1">
-                    {selectedQuote.numero_cotizacion || 'Sin número'}
-                  </p>
+            {/* Modal centrado */}
+            <div 
+              className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-3xl max-h-[85vh] overflow-y-auto flex flex-col relative"
+            >
+              {/* Header */}
+              <div className="px-3 sm:px-6 pt-4 sm:pt-6 pb-3 sm:pb-4 border-b border-gray-100 bg-white z-10">
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between gap-2">
+                  <div>
+                    <div className="text-xl sm:text-2xl lg:text-3xl font-black text-gray-900 tracking-tight leading-tight">{formatNumberPlain(selectedQuote.total)}</div>
+                    <div className="text-xs sm:text-sm lg:text-base font-semibold text-gray-700 mt-1 uppercase tracking-wider">Folio: {selectedQuote.numero_cotizacion || selectedQuote.id}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs sm:text-sm lg:text-base text-gray-500 font-medium">
+                      {new Date(selectedQuote.created_at).toLocaleDateString('es-ES', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-')} {new Date(selectedQuote.created_at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  </div>
                 </div>
-                <button
-                  onClick={() => setSelectedQuote(null)}
-                  className="text-gray-400 hover:text-gray-600 text-xl sm:text-2xl"
-                >
-                  ✕
-                </button>
+                <div className="text-center mt-2 sm:mt-3">
+                  <div className="text-sm sm:text-base lg:text-lg font-bold text-gray-900 mb-1">Cotización</div>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 mt-3 sm:mt-4 text-center justify-between">
+                  <div className="flex-1">
+                    <div className="text-sm sm:text-base lg:text-lg font-bold text-gray-900 mb-1">—</div>
+                    <div className="text-[10px] sm:text-xs uppercase tracking-wider text-gray-400 font-medium">Vendedor</div>
+                  </div>
+                  <div className="flex-1">
+                    <div className="text-sm sm:text-base lg:text-lg font-bold text-gray-900 mb-1">Cotización</div>
+                    <div className="text-[10px] sm:text-xs uppercase tracking-wider text-gray-400 font-medium">Caja</div>
+                  </div>
+                  <div className="flex-1">
+                    <div className="text-sm sm:text-base lg:text-lg font-bold text-gray-900 mb-1 truncate">
+                      {selectedQuote.datos_cliente?.tipo === 'natural' 
+                        ? (selectedQuote.datos_cliente?.nombre || '—')
+                        : (selectedQuote.datos_cliente?.empresa?.nombre || '—')}
+                    </div>
+                    <div className="text-[10px] sm:text-xs uppercase tracking-wider text-gray-400 font-medium">Cliente</div>
+                  </div>
+                </div>
+              </div>
               </div>
 
-              <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
-                {/* Información general */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                  <div>
-                    <label className="text-xs sm:text-sm font-medium text-gray-600">Fecha de creación</label>
-                    <p className="text-sm sm:text-base text-gray-900 mt-1">
-                      {new Date(selectedQuote.created_at).toLocaleString('es-ES')}
-                    </p>
+              {/* Productos */}
+              <div className="px-3 sm:px-6 py-3 sm:py-5 bg-white">
+              <h3 className="font-semibold text-gray-800 mb-3 sm:mb-4 text-xs sm:text-sm lg:text-base border-b border-gray-100 pb-2 tracking-wide uppercase">Productos vendidos</h3>
+              {selectedQuote.resumen_pedido?.items && selectedQuote.resumen_pedido.items.length > 0 ? (
+                <div className="divide-y divide-gray-50">
+                  {selectedQuote.resumen_pedido.items.map((item: any, index: number) => (
+                    <div key={item.id || index} className="py-2 text-xs sm:text-sm">
+                      <div className="grid grid-cols-12 items-center">
+                        <div className="col-span-7 font-medium text-gray-900 truncate text-left">
+                          <div className="text-xs sm:text-sm">
+                            {item.descripcion || 'Prenda sin descripción'}
+                            {item.talla && ` - Talla: ${item.talla}`}
+                            {item.color && `, Color: ${item.color}`}
+                          </div>
+                        </div>
+                        <div className="col-span-2 text-gray-500 font-mono text-[10px] sm:text-xs text-center">x{item.cantidad || 1}</div>
+                        <div className="col-span-3 font-semibold text-gray-900 text-right text-xs sm:text-sm">{formatNumberPlain(item.total || 0)}</div>
+                      </div>
+                      {/* Modificaciones */}
+                      {item.modificaciones && item.modificaciones.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-gray-100 ml-0">
+                          <div className="text-[10px] sm:text-xs font-medium text-gray-600 mb-1.5">Modificaciones:</div>
+                          <div className="space-y-1">
+                            {item.modificaciones.map((mod: any, modIndex: number) => (
+                              <div key={mod.id || modIndex} className="text-[10px] sm:text-xs text-gray-600 bg-gray-50 rounded px-2 py-1">
+                                <span className="font-medium">{mod.nombre}</span>
+                                {mod.descripcion && <span className="text-gray-500"> - {mod.descripcion}</span>}
+                                <span className="ml-2 text-gray-500">
+                                  ({formatNumberPlain(mod.precio_unitario || 0)} × {mod.cantidad || 0} = {formatNumberPlain(mod.subtotal || 0)})
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-4 text-gray-500 text-xs sm:text-sm">No hay productos en esta cotización</div>
+              )}
+              </div>
+
+              {/* Resumen financiero y acciones */}
+              <div className="px-3 sm:px-6 pt-3 sm:pt-5 pb-4 sm:pb-6 bg-gray-50 border-t border-gray-100">
+              <div className="max-w-md mx-auto">
+                <div className="flex flex-col gap-1.5 sm:gap-2 text-xs sm:text-sm lg:text-base">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-500 font-normal">Subtotal</span>
+                    <span className="font-semibold text-gray-900">{formatNumberPlain(selectedQuote.subtotal)}</span>
                   </div>
-                  <div>
-                    <label className="text-xs sm:text-sm font-medium text-gray-600">Estado</label>
-                    <p className="text-sm sm:text-base text-gray-900 mt-1 capitalize">{selectedQuote.estado}</p>
+                  {selectedQuote.costo_envio > 0 && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-500 font-normal">Envío</span>
+                      <span className="font-semibold text-gray-900">{formatNumberPlain(selectedQuote.costo_envio)}</span>
+                    </div>
+                  )}
+                  <div className="border-t border-gray-200 my-1.5 sm:my-2"></div>
+                  <div className="flex justify-between items-center text-base sm:text-lg lg:text-xl font-black">
+                    <span className="text-gray-900">Total</span>
+                    <span className="text-gray-900">{formatNumberPlain(selectedQuote.total)}</span>
+                  </div>
+                  <div className="flex justify-between items-center pt-1">
+                    <span className="text-[10px] sm:text-xs text-gray-400">Estado</span>
+                    <span className="text-[10px] sm:text-xs font-medium text-gray-700 capitalize truncate ml-2">{selectedQuote.estado}</span>
                   </div>
                 </div>
-
-                {/* Datos del cliente */}
-                <div className="border-t border-gray-200 pt-4">
-                  <h4 className="text-sm sm:text-base font-semibold text-gray-900 mb-3">Datos del cliente</h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                    {selectedQuote.datos_cliente?.tipo === 'natural' ? (
-                      <>
-                        <div>
-                          <label className="text-xs sm:text-sm font-medium text-gray-600">Tipo</label>
-                          <p className="text-sm sm:text-base text-gray-900 mt-1">Persona natural</p>
-                        </div>
-                        {selectedQuote.datos_cliente?.nombre && (
-                          <div>
-                            <label className="text-xs sm:text-sm font-medium text-gray-600">Nombre</label>
-                            <p className="text-sm sm:text-base text-gray-900 mt-1">{selectedQuote.datos_cliente.nombre}</p>
-                          </div>
-                        )}
-                        {selectedQuote.datos_cliente?.identificacion && (
-                          <div>
-                            <label className="text-xs sm:text-sm font-medium text-gray-600">Documento</label>
-                            <p className="text-sm sm:text-base text-gray-900 mt-1">{selectedQuote.datos_cliente.identificacion}</p>
-                          </div>
-                        )}
-                        {selectedQuote.datos_cliente?.email && (
-                          <div>
-                            <label className="text-xs sm:text-sm font-medium text-gray-600">Email</label>
-                            <p className="text-sm sm:text-base text-gray-900 mt-1">{selectedQuote.datos_cliente.email}</p>
-                          </div>
-                        )}
-                        {selectedQuote.datos_cliente?.telefono && (
-                          <div>
-                            <label className="text-xs sm:text-sm font-medium text-gray-600">Teléfono</label>
-                            <p className="text-sm sm:text-base text-gray-900 mt-1">{selectedQuote.datos_cliente.telefono}</p>
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                        <div>
-                          <label className="text-xs sm:text-sm font-medium text-gray-600">Tipo</label>
-                          <p className="text-sm sm:text-base text-gray-900 mt-1">Empresa</p>
-                        </div>
-                        {selectedQuote.datos_cliente?.empresa?.nombre && (
-                          <div>
-                            <label className="text-xs sm:text-sm font-medium text-gray-600">Razón social</label>
-                            <p className="text-sm sm:text-base text-gray-900 mt-1">{selectedQuote.datos_cliente.empresa.nombre}</p>
-                          </div>
-                        )}
-                        {selectedQuote.datos_cliente?.empresa?.nit && (
-                          <div>
-                            <label className="text-xs sm:text-sm font-medium text-gray-600">NIT</label>
-                            <p className="text-sm sm:text-base text-gray-900 mt-1">{selectedQuote.datos_cliente.empresa.nit}</p>
-                          </div>
-                        )}
-                        {selectedQuote.datos_cliente?.empresa?.contacto && (
-                          <div>
-                            <label className="text-xs sm:text-sm font-medium text-gray-600">Contacto</label>
-                            <p className="text-sm sm:text-base text-gray-900 mt-1">{selectedQuote.datos_cliente.empresa.contacto}</p>
-                          </div>
-                        )}
-                        {selectedQuote.datos_cliente?.email && (
-                          <div>
-                            <label className="text-xs sm:text-sm font-medium text-gray-600">Email</label>
-                            <p className="text-sm sm:text-base text-gray-900 mt-1">{selectedQuote.datos_cliente.email}</p>
-                          </div>
-                        )}
-                        {selectedQuote.datos_cliente?.telefono && (
-                          <div>
-                            <label className="text-xs sm:text-sm font-medium text-gray-600">Teléfono</label>
-                            <p className="text-sm sm:text-base text-gray-900 mt-1">{selectedQuote.datos_cliente.telefono}</p>
-                          </div>
-                        )}
-                      </>
-                    )}
+                {selectedQuote.notas_cliente && (
+                  <div className="mt-3 sm:mt-4">
+                    <div className="text-[10px] sm:text-xs uppercase tracking-wider text-gray-400 font-medium mb-1">Notas del cliente</div>
+                    <p className="text-xs sm:text-sm text-gray-700 whitespace-pre-wrap">{selectedQuote.notas_cliente}</p>
                   </div>
-                </div>
-
-                {/* Envío */}
+                )}
                 {selectedQuote.envio && (
-                  <div className="border-t border-gray-200 pt-4">
-                    <h4 className="text-sm sm:text-base font-semibold text-gray-900 mb-3">Envío</h4>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  <div className="mt-3 sm:mt-4">
+                    <div className="text-[10px] sm:text-xs uppercase tracking-wider text-gray-400 font-medium mb-1">Envío</div>
+                    <div className="text-xs sm:text-sm text-gray-700 space-y-1">
                       {selectedQuote.envio.destino && (
-                        <div>
-                          <label className="text-xs sm:text-sm font-medium text-gray-600">Destino</label>
-                          <p className="text-sm sm:text-base text-gray-900 mt-1">{selectedQuote.envio.destino}</p>
-                        </div>
+                        <div>Destino: {selectedQuote.envio.destino}</div>
                       )}
                       {selectedQuote.envio.costo > 0 && (
-                        <div>
-                          <label className="text-xs sm:text-sm font-medium text-gray-600">Costo de envío</label>
-                          <p className="text-sm sm:text-base text-gray-900 mt-1">{formatNumberPlain(selectedQuote.envio.costo)}</p>
-                        </div>
+                        <div>Costo: {formatNumberPlain(selectedQuote.envio.costo)}</div>
                       )}
                     </div>
                   </div>
                 )}
-
-                {/* Notas del cliente */}
-                {selectedQuote.notas_cliente && (
-                  <div className="border-t border-gray-200 pt-4">
-                    <h4 className="text-sm sm:text-base font-semibold text-gray-900 mb-3">Detalle del cliente</h4>
-                    <p className="text-sm sm:text-base text-gray-700 whitespace-pre-wrap">{selectedQuote.notas_cliente}</p>
-                  </div>
-                )}
-
-                {/* Resumen del pedido */}
-                {selectedQuote.resumen_pedido && (
-                  <div className="border-t border-gray-200 pt-4">
-                    <h4 className="text-sm sm:text-base font-semibold text-gray-900 mb-3">Resumen del pedido</h4>
-                    <div className="space-y-4">
-                      {selectedQuote.resumen_pedido.items?.map((item: any, index: number) => (
-                        <div key={item.id || index} className="border border-gray-200 rounded-lg p-3 sm:p-4 bg-gray-50">
-                          <div className="flex items-start justify-between mb-2">
-                            <div className="flex-1">
-                              <h5 className="text-sm sm:text-base font-semibold text-gray-900">
-                                {index + 1}. {item.descripcion || 'Prenda sin descripción'}
-                              </h5>
-                              <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs sm:text-sm text-gray-600">
-                                <div>
-                                  <span className="font-medium">Precio unit:</span> {formatNumberPlain(item.precio_unitario || 0)}
-                                </div>
-                                <div>
-                                  <span className="font-medium">Desc. unit:</span> {formatNumberPlain(item.descuento_unitario || 0)}
-                                </div>
-                                <div>
-                                  <span className="font-medium">Cantidad:</span> {item.cantidad || 0}
-                                </div>
-                                <div>
-                                  <span className="font-medium">Total:</span> {formatNumberPlain(item.total || 0)}
-                                </div>
-                              </div>
-                            </div>
-                            {item.imagen_url && (
-                              <img src={item.imagen_url} alt={item.descripcion} className="w-16 h-16 sm:w-20 sm:h-20 rounded border border-gray-200 object-cover ml-3" />
-                            )}
-                          </div>
-                          {item.modificaciones && item.modificaciones.length > 0 && (
-                            <div className="mt-3 pt-3 border-t border-gray-200">
-                              <h6 className="text-xs sm:text-sm font-medium text-gray-700 mb-2">Modificaciones:</h6>
-                              <div className="space-y-1">
-                                {item.modificaciones.map((mod: any, modIndex: number) => (
-                                  <div key={mod.id || modIndex} className="text-xs sm:text-sm text-gray-600 bg-white rounded px-2 py-1">
-                                    <span className="font-medium">{mod.nombre}</span>
-                                    {mod.descripcion && <span className="text-gray-500"> - {mod.descripcion}</span>}
-                                    <span className="ml-2">
-                                      ({formatNumberPlain(mod.precio_unitario || 0)} × {mod.cantidad || 0} = {formatNumberPlain(mod.subtotal || 0)})
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                    <div className="mt-4 pt-4 border-t border-gray-300">
-                      <div className="flex justify-end">
-                        <div className="w-full sm:w-auto min-w-[200px] space-y-2">
-                          <div className="flex justify-between text-sm sm:text-base">
-                            <span className="text-gray-600">Subtotal:</span>
-                            <span className="font-semibold text-gray-900">{formatNumberPlain(selectedQuote.subtotal)}</span>
-                          </div>
-                          {selectedQuote.costo_envio > 0 && (
-                            <div className="flex justify-between text-sm sm:text-base">
-                              <span className="text-gray-600">Envío:</span>
-                              <span className="font-semibold text-gray-900">{formatNumberPlain(selectedQuote.costo_envio)}</span>
-                            </div>
-                          )}
-                          <div className="flex justify-between text-base sm:text-lg pt-2 border-t border-gray-300">
-                            <span className="font-bold text-gray-900">Total:</span>
-                            <span className="font-bold text-gray-900">{formatNumberPlain(selectedQuote.total)}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                <div className="flex flex-col sm:flex-row justify-end mt-4 sm:mt-6 gap-2">
+                  <button onClick={() => setSelectedQuote(null)} className="w-full sm:w-auto px-4 sm:px-6 py-2 rounded-lg bg-gray-900 text-white font-bold text-xs sm:text-sm lg:text-base">Cerrar</button>
+                </div>
+              </div>
               </div>
             </div>
           </div>
-        </>
+        </div>
       )}
     </div>
   )

@@ -16,6 +16,15 @@ import {
   DollarSignIcon
 } from './icons'
 
+interface Modification {
+  id: string
+  nombre: string
+  descripcion?: string
+  precio_unitario: number
+  cantidad: number
+  subtotal: number
+}
+
 interface SaleItem {
   id: string
   name: string
@@ -23,6 +32,7 @@ interface SaleItem {
   image?: string
   quantity: number
   unitPrice: number
+  modifications?: Modification[]
 }
 
 type PaymentMethod = 'efectivo' | 'tarjeta' | 'mixto' | 'transferencia'
@@ -189,16 +199,25 @@ export function PaymentHistory() {
     return () => clearTimeout(timer)
   }, [])
 
-  // Cargar ventas desde Supabase
+  // Cargar ventas y cotizaciones aprobadas desde Supabase
   useEffect(() => {
     async function fetchSales() {
-      const { data, error } = await supabase
+      // Cargar ventas
+      const { data: salesData, error: salesError } = await supabase
         .from('sales')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(200)
 
-      if (error || !data) return
+      // Cargar cotizaciones aprobadas
+      const { data: quotesData, error: quotesError } = await supabase
+        .from('cotizaciones')
+        .select('*')
+        .eq('estado', 'aprobada')
+        .order('created_at', { ascending: false })
+        .limit(200)
+
+      if (salesError && quotesError) return
 
       type DbCartLine = {
         id: string
@@ -237,14 +256,15 @@ export function PaymentHistory() {
         }
       }
 
-      const mapped: SaleRecord[] = (data as unknown as DbSaleRow[]).map(r => {
+      // Mapear ventas
+      const mappedSales: SaleRecord[] = (salesData || []).map((r: any) => {
         const d = new Date(r.created_at)
         const date = d.toISOString().slice(0, 10)
         const time = d.toTimeString().slice(0, 5)
         const payments = r.payments || []
         const methodInfo = payments.length > 0 ? mapMethod(payments) : { method: 'efectivo' as PaymentMethod }
 
-        const items: SaleItem[] = (r.items || []).map(it => ({
+        const items: SaleItem[] = (r.items || []).map((it: any) => ({
           id: it.id || it.itemId,
           name: it.name,
           variant: it.variantLabel,
@@ -272,7 +292,71 @@ export function PaymentHistory() {
         return sr
       })
 
-      setSalesHistory(mapped)
+        // Mapear cotizaciones aprobadas
+        const mappedQuotes: SaleRecord[] = (quotesData || []).map((q: any) => {
+          const d = new Date(q.created_at)
+          const date = d.toISOString().slice(0, 10)
+          const time = d.toTimeString().slice(0, 5)
+
+          // Convertir items de cotización al formato de venta
+          const items: SaleItem[] = (q.resumen_pedido?.items || []).map((item: any) => ({
+            id: item.id || '',
+            name: item.descripcion || 'Producto',
+            variant: undefined,
+            image: item.imagen_url,
+            quantity: Number(item.cantidad || 0),
+            unitPrice: Number(item.precio_unitario || 0),
+            modifications: (item.modificaciones || []).map((mod: any) => ({
+              id: mod.id || '',
+              nombre: mod.nombre || 'Modificación',
+              descripcion: mod.descripcion,
+              precio_unitario: Number(mod.precio_unitario || 0),
+              cantidad: Number(mod.cantidad || 0),
+              subtotal: Number(mod.subtotal || 0)
+            }))
+          }))
+
+          // Calcular descuento total desde los items (descuento_unitario * cantidad)
+          const totalDiscount = (q.resumen_pedido?.items || []).reduce((acc: number, item: any) => {
+            return acc + (Number(item.descuento_unitario || 0) * Number(item.cantidad || 0))
+          }, 0)
+
+          // Obtener datos del cliente
+          const customer = q.datos_cliente?.tipo === 'natural'
+            ? { name: q.datos_cliente?.nombre, phone: q.datos_cliente?.telefono }
+            : { name: q.datos_cliente?.empresa?.nombre, phone: q.datos_cliente?.telefono }
+
+          // Crear pago por defecto para cotizaciones
+          const payments: DbPaymentPart[] = [{ method: 'transfer', amount: Number(q.total || 0) }]
+          const methodInfo = mapMethod(payments)
+
+          const sr: SaleRecord = {
+            id: q.id,
+            date,
+            time,
+            seller: 'Cotización',
+            register: 'Cotización',
+            customer: customer.name ? customer : undefined,
+            items,
+            subtotal: Number(q.subtotal || 0),
+            discount: totalDiscount > 0 ? { label: 'Descuento', amount: totalDiscount } : undefined,
+            totalPaid: Number(q.total || 0),
+            paymentMethod: methodInfo.method,
+            paymentDetail: 'Cotización aprobada',
+            status: 'completada' as SaleStatus,
+            payments
+          }
+          return sr
+        })
+
+      // Combinar y ordenar por fecha
+      const allRecords = [...mappedSales, ...mappedQuotes].sort((a, b) => {
+        const dateA = new Date(`${a.date}T${a.time}`)
+        const dateB = new Date(`${b.date}T${b.time}`)
+        return dateB.getTime() - dateA.getTime()
+      })
+
+      setSalesHistory(allRecords)
     }
     fetchSales()
   }, [])
@@ -391,21 +475,36 @@ export function PaymentHistory() {
       const w = window.open('', '_blank')
       if (!w) return
       
-      const itemsHtml = sale.items.map(l => `
-        <tr style="border-bottom: 1px solid #f3f4f6;">
-          <td style="padding: 6px 0; font-size: 10px; color: #111827;">
-            <div style="font-weight: 500; margin-bottom: 1px;">${l.name}</div>
-            ${l.variant ? `<div style="font-size: 9px; color: #6b7280; margin-bottom: 1px;">${l.variant}</div>` : ''}
-            <div style="font-size: 8px; color: #9ca3af;">SKU: ${l.id}</div>
-          </td>
-          <td style="padding: 6px 4px; text-align: center; font-size: 10px; color: #111827; font-weight: 500;">
-            x${l.quantity}
-          </td>
-          <td style="padding: 6px 0; text-align: right; font-size: 10px; color: #111827; font-weight: 600;">
-            ${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(l.unitPrice * l.quantity)}
-          </td>
-        </tr>
-      `).join('')
+      const itemsHtml = sale.items.map(l => {
+        const modificationsHtml = (l.modifications && l.modifications.length > 0) ? `
+          <div style="margin-top: 4px; padding-top: 4px; border-top: 1px solid #e5e7eb;">
+            <div style="font-size: 8px; color: #6b7280; font-weight: 500; margin-bottom: 3px;">Modificaciones:</div>
+            ${l.modifications.map((mod: Modification) => `
+              <div style="font-size: 8px; color: #4b5563; margin-left: 8px; margin-bottom: 2px;">
+                • ${mod.nombre}${mod.descripcion ? ` - ${mod.descripcion}` : ''} 
+                (${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(mod.precio_unitario)} × ${mod.cantidad} = ${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(mod.subtotal)})
+              </div>
+            `).join('')}
+          </div>
+        ` : ''
+        
+        return `
+          <tr style="border-bottom: 1px solid #f3f4f6;">
+            <td style="padding: 6px 0; font-size: 10px; color: #111827;">
+              <div style="font-weight: 500; margin-bottom: 1px;">${l.name}</div>
+              ${l.variant ? `<div style="font-size: 9px; color: #6b7280; margin-bottom: 1px;">${l.variant}</div>` : ''}
+              <div style="font-size: 8px; color: #9ca3af;">SKU: ${l.id}</div>
+              ${modificationsHtml}
+            </td>
+            <td style="padding: 6px 4px; text-align: center; font-size: 10px; color: #111827; font-weight: 500;">
+              x${l.quantity}
+            </td>
+            <td style="padding: 6px 0; text-align: right; font-size: 10px; color: #111827; font-weight: 600;">
+              ${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(l.unitPrice * l.quantity)}
+            </td>
+          </tr>
+        `
+      }).join('')
       
       const paymentsHtml = (sale.payments || []).map((p) => {
         const methodNames: Record<string, string> = {
@@ -781,12 +880,12 @@ export function PaymentHistory() {
 
   return (
     <div 
-      className={`h-full overflow-y-auto bg-gradient-to-br from-gray-50 to-gray-100 transition-opacity duration-500 ${
+      className={`min-h-screen h-full overflow-y-auto bg-gradient-to-br from-gray-50 to-gray-100 transition-opacity duration-500 ${
         isLoading ? 'opacity-0' : 'opacity-100'
       } ${getFontSizeClass()}`} 
       style={{ fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif' }}
     >
-      <div className="p-3 sm:p-4 lg:p-6">
+      <div className="p-3 sm:p-4 lg:p-6 min-h-full">
         {/* Header */}
         <div className="mb-4 sm:mb-6 lg:mb-8 animate-fadeInSlide">
           <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-black mb-1 sm:mb-2 tracking-tight">
@@ -1006,12 +1105,12 @@ export function PaymentHistory() {
 
       {/* Modal Detalle de Venta */}
       {isDetailOpen && selectedSale && (
-        <div className="fixed inset-0 z-50 p-2 sm:p-4 lg:p-6 flex justify-center items-center" style={{ overflow: 'auto' }}>
+        <div className="fixed inset-0 z-50 p-2 sm:p-4 lg:p-6 flex justify-center items-start pt-8 sm:pt-12" style={{ overflow: 'auto' }}>
           {/* Blur overlay */}
           <div className="fixed inset-0 bg-white/20 backdrop-blur-[2px] z-0 transition-all duration-300" />
           {/* Modal centrado */}
           <div 
-            className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto flex flex-col z-10 relative"
+            className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-3xl max-h-[calc(100vh-4rem)] sm:max-h-[calc(100vh-6rem)] overflow-y-auto flex flex-col z-10 relative mb-4 sm:mb-6"
           >
             {/* Header */}
             <div className="px-3 sm:px-6 pt-4 sm:pt-6 pb-3 sm:pb-4 border-b border-gray-100 bg-white sticky top-0 z-10">
@@ -1048,12 +1147,31 @@ export function PaymentHistory() {
               <h3 className="font-semibold text-gray-800 mb-3 sm:mb-4 text-xs sm:text-sm lg:text-base border-b border-gray-100 pb-2 tracking-wide uppercase">Productos vendidos</h3>
               <div className="divide-y divide-gray-50">
                 {selectedSale.items.map((item) => (
-                  <div key={item.id} className="grid grid-cols-12 items-center py-2 text-xs sm:text-sm">
-                    <div className="col-span-7 font-medium text-gray-900 truncate text-left">
-                      <div className="text-xs sm:text-sm">{item.name}{item.variant ? ` – ${item.variant}` : ''}</div>
+                  <div key={item.id} className="py-2 text-xs sm:text-sm">
+                    <div className="grid grid-cols-12 items-center">
+                      <div className="col-span-7 font-medium text-gray-900 truncate text-left">
+                        <div className="text-xs sm:text-sm">{item.name}{item.variant ? ` – ${item.variant}` : ''}</div>
+                      </div>
+                      <div className="col-span-2 text-gray-500 font-mono text-[10px] sm:text-xs text-center">x{item.quantity}</div>
+                      <div className="col-span-3 font-semibold text-gray-900 text-right text-xs sm:text-sm">{formatNumber(item.unitPrice * item.quantity)}</div>
                     </div>
-                    <div className="col-span-2 text-gray-500 font-mono text-[10px] sm:text-xs text-center">x{item.quantity}</div>
-                    <div className="col-span-3 font-semibold text-gray-900 text-right text-xs sm:text-sm">{formatNumber(item.unitPrice * item.quantity)}</div>
+                    {/* Modificaciones */}
+                    {item.modifications && item.modifications.length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-gray-100 ml-0">
+                        <div className="text-[10px] sm:text-xs font-medium text-gray-600 mb-1.5">Modificaciones:</div>
+                        <div className="space-y-1">
+                          {item.modifications.map((mod) => (
+                            <div key={mod.id} className="text-[10px] sm:text-xs text-gray-600 bg-gray-50 rounded px-2 py-1">
+                              <span className="font-medium">{mod.nombre}</span>
+                              {mod.descripcion && <span className="text-gray-500"> - {mod.descripcion}</span>}
+                              <span className="ml-2 text-gray-500">
+                                ({formatNumber(mod.precio_unitario)} × {mod.cantidad} = {formatNumber(mod.subtotal)})
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

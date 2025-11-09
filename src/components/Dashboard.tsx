@@ -204,9 +204,50 @@ export function Dashboard() {
 
         const sales = (sales7d || []) as unknown as DbSale[]
 
-        // KPIs hoy/ayer
-        const today = sales.filter(s => new Date(s.created_at) >= startOfToday)
-        const yesterday = sales.filter(s => new Date(s.created_at) >= startOfYesterday && new Date(s.created_at) < startOfToday)
+        // 3) Cotizaciones aprobadas - incluir en métricas
+        const { data: approvedQuotes } = await supabase
+          .from('cotizaciones')
+          .select('id, created_at, subtotal, total, datos_cliente, resumen_pedido')
+          .eq('estado', 'aprobada')
+          .gte('created_at', startOf7DaysAgo.toISOString())
+          .order('created_at', { ascending: false })
+
+        // Convertir cotizaciones aprobadas a formato similar a ventas para métricas
+        const quotesAsSales = (approvedQuotes || []).map((q: any) => {
+          const items = (q.resumen_pedido?.items || []).map((item: any) => ({
+            name: item.descripcion || 'Producto',
+            quantity: Number(item.cantidad || 0),
+            unitPrice: Number(item.precio_unitario || 0),
+            variantLabel: undefined,
+            sku: item.id || ''
+          }))
+          
+          // Calcular descuento total desde los items (descuento_unitario * cantidad)
+          const totalDiscount = (q.resumen_pedido?.items || []).reduce((acc: number, item: any) => {
+            return acc + (Number(item.descuento_unitario || 0) * Number(item.cantidad || 0))
+          }, 0)
+          
+          // Crear un pago por defecto para cotizaciones (se puede ajustar según necesidad)
+          const payments = [{ method: 'transfer' as const, amount: Number(q.total || 0) }]
+          
+          return {
+            id: q.id,
+            created_at: q.created_at,
+            subtotal: Number(q.subtotal || 0),
+            discount: totalDiscount,
+            total: Number(q.total || 0),
+            items,
+            payments,
+            seller: 'Cotización'
+          }
+        })
+
+        // Combinar ventas y cotizaciones aprobadas para métricas
+        const allSales = [...sales, ...quotesAsSales]
+
+        // KPIs hoy/ayer (incluyendo cotizaciones aprobadas)
+        const today = allSales.filter(s => new Date(s.created_at) >= startOfToday)
+        const yesterday = allSales.filter(s => new Date(s.created_at) >= startOfYesterday && new Date(s.created_at) < startOfToday)
         const todayCount = today.length
         const todayTotal = today.reduce((acc, s) => acc + Number(s.total || 0), 0)
         const todayDiscount = today.reduce((acc, s) => acc + Number(s.discount || 0), 0)
@@ -216,8 +257,12 @@ export function Dashboard() {
         setTodayDiscountTotal(todayDiscount)
         setYesterdaySalesTotal(yestTotal)
 
-        // Ventas recientes (últimas 10)
-        const recent = sales.slice(0, 10).map(s => {
+        // Ventas recientes (últimas 10) - incluyendo cotizaciones aprobadas
+        const allRecent = [...sales, ...quotesAsSales]
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+          .slice(0, 10)
+        
+        const recent = allRecent.map(s => {
           const created = new Date(s.created_at)
           const hh = created.getHours().toString().padStart(2, '0')
           const mm = created.getMinutes().toString().padStart(2, '0')
@@ -237,10 +282,10 @@ export function Dashboard() {
         })
         setRecentSales(recent)
 
-        // Top products (por cantidad e ingresos en últimos 7 días)
+        // Top products (por cantidad e ingresos en últimos 7 días) - incluyendo cotizaciones aprobadas
         const productMap = new Map<string, { sku: string, name: string, qty: number, revenue: number }>()
         const metaBySku = ((window as any).__garmentMetaBySku as Map<string, { image_url?: string, category?: string, price?: number, name?: string }>) || new Map()
-        for (const s of sales) {
+        for (const s of allSales) {
           for (const line of (s.items || [])) {
             const key = `${line.sku || line.name}`
             const entry = productMap.get(key) || { sku: line.sku || line.name, name: line.name, qty: 0, revenue: 0 }
