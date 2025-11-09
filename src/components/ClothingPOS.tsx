@@ -597,7 +597,16 @@ export function ClothingPOS() {
 
     if (!sku) return
 
-    const found = inventory.find(it => it.sku.toLowerCase() === sku.toLowerCase())
+    // Search in main SKU and also in variant SKUs
+    const found = inventory.find(it => {
+      // Check main SKU
+      if (it.sku.toLowerCase() === sku.toLowerCase()) return true
+      // Check variant SKUs
+      if (it.variants && it.variants.length > 0) {
+        return it.variants.some(v => v.sku && v.sku.toLowerCase() === sku.toLowerCase())
+      }
+      return false
+    })
     if (!found) return
 
     // Debounce: ignore if same product scanned within 3 seconds
@@ -614,24 +623,57 @@ export function ClothingPOS() {
     let variantLabel: string | undefined = undefined
     let color = found.variants?.[0]?.color || ''
     let size = found.variants?.[0]?.size || ''
+    let variantImageUrl = found.imageUrl // Default to product image
 
     // If QR contains color and size, try to match variant
     if (qrData && qrData.color && qrData.size && found.variants && found.variants.length > 0) {
-      const variant = found.variants.find(
-        v => v.color.toLowerCase() === qrData.color!.toLowerCase() && 
-             v.size.toLowerCase() === qrData.size!.toLowerCase()
+      // First try to match by SKU from QR if available
+      let variant = found.variants.find(
+        v => v.sku && v.sku.toLowerCase() === sku.toLowerCase()
       )
+      
+      // If not found by SKU, try to match by color and size
+      if (!variant) {
+        variant = found.variants.find(
+          v => {
+            const colorMatch = v.color.toLowerCase().trim() === qrData.color!.toLowerCase().trim()
+            const sizeMatch = v.size.toLowerCase().trim() === qrData.size!.toLowerCase().trim()
+            return colorMatch && sizeMatch
+          }
+        )
+      }
       
       if (variant && variant.qty > 0) {
         color = variant.color
         size = variant.size
         variantLabel = `${variant.color} / ${variant.size}`
+        // Use variant image if available, otherwise use product image
+        variantImageUrl = variant.imageUrl || found.imageUrl
       }
     } else if (found.variants && found.variants.length > 0) {
-      // Use first variant if available
-      color = found.variants[0].color
-      size = found.variants[0].size
-      variantLabel = `${found.variants[0].color} / ${found.variants[0].size}`
+      // If QR has SKU, try to find variant by SKU
+      if (sku) {
+        const variantBySku = found.variants.find(v => v.sku && v.sku.toLowerCase() === sku.toLowerCase())
+        if (variantBySku) {
+          color = variantBySku.color
+          size = variantBySku.size
+          variantLabel = `${variantBySku.color} / ${variantBySku.size}`
+          // Use variant image if available, otherwise use product image
+          variantImageUrl = variantBySku.imageUrl || found.imageUrl
+        } else {
+          // Use first variant if available
+          color = found.variants[0].color
+          size = found.variants[0].size
+          variantLabel = `${found.variants[0].color} / ${found.variants[0].size}`
+          variantImageUrl = found.variants[0].imageUrl || found.imageUrl
+        }
+      } else {
+        // Use first variant if available
+        color = found.variants[0].color
+        size = found.variants[0].size
+        variantLabel = `${found.variants[0].color} / ${found.variants[0].size}`
+        variantImageUrl = found.variants[0].imageUrl || found.imageUrl
+      }
     }
 
     // Create unique ID for scanned item (includes variant if available)
@@ -651,7 +693,7 @@ export function ClothingPOS() {
       return [...prev, { 
         sku: found.sku, 
         name: found.name, 
-        imageUrl: found.imageUrl, 
+        imageUrl: variantImageUrl, 
         count: 1,
         color: color,
         size: size,
@@ -689,6 +731,8 @@ export function ClothingPOS() {
             const remaining = Math.max(0, Number(variant.qty || 0) - alreadyInCart)
             const toAdd = Math.min(remaining, item.count)
             if (toAdd > 0) {
+              // Use variant image if available, otherwise use product image
+              const variantImageUrl = variant.imageUrl || found.imageUrl
               const line: CartLine = {
                 id: lineId,
                 itemId: found.id,
@@ -696,7 +740,7 @@ export function ClothingPOS() {
                 sku: found.sku,
                 unitPrice: found.price,
                 quantity: toAdd,
-                imageUrl: found.imageUrl,
+                imageUrl: variantImageUrl,
                 variantLabel: `${variant.color} / ${variant.size}`
               }
               upsertCart(line)

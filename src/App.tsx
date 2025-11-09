@@ -1,13 +1,16 @@
 import { useState, useEffect } from 'react'
 import { Sidebar } from './components/Sidebar'
 import { AdminSidebar } from './components/AdminSidebar'
+import { FabricaSidebar } from './components/FabricaSidebar'
 import { Dashboard } from './components/Dashboard'
 import { AdminDashboard } from './components/AdminDashboard'
+import { FabricaDashboard } from './components/FabricaDashboard'
 import { AdminEmployees } from './components/AdminEmployees'
 import { AdminExpenses } from './components/AdminExpenses'
 import { AdminDebts } from './components/AdminDebts'
 import { AdminInventory } from './components/AdminInventory'
 import { UserInventory } from './components/UserInventory'
+import { FabricaInventory } from './components/FabricaInventory'
 import { TakeOrder } from './components/TakeOrder'
 import { ClothingPOS } from './components/ClothingPOS'
 import { Quotes } from './components/Quotes'
@@ -17,6 +20,7 @@ import ProductionOrders from './components/ProductionOrders'
 import { Login } from './components/Login'
 import { KitchenDashboard } from './components/KitchenDashboard'
 import { Clients } from './components/Clients'
+import { Fabrica } from './components/Fabrica'
 import { ConfigProvider } from './contexts/ConfigContext'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { OrderProvider } from './contexts/OrderContext'
@@ -36,6 +40,8 @@ function AppContent() {
         setCurrentPage('admin-dashboard')
       } else if (user.role === 'frontman') {
         setCurrentPage('dashboard')
+      } else if (user.role === 'fabrica') {
+        setCurrentPage('fabrica-dashboard')
       }
       // kitchen role uses its own dashboard without page navigation
     }
@@ -85,6 +91,35 @@ function AppContent() {
             return <Settings />
           default:
             return <AdminDashboard />
+        }
+      })()
+
+      return (
+        <div 
+          key={currentPage}
+          className={`page-content ${
+            isTransitioning ? 'page-loading' : 'page-enter'
+          }`}
+        >
+          {pageContent}
+        </div>
+      )
+    }
+
+    // Si es fabrica, mostrar la interfaz de fábrica
+    if (user?.role === 'fabrica') {
+      const pageContent = (() => {
+        switch (currentPage) {
+          case 'fabrica-dashboard':
+            return <FabricaDashboard />
+          case 'fabrica-inventory':
+            return <FabricaInventory />
+          case 'fabrica-quotes':
+            return <Quotes />
+          case 'fabrica':
+            return <Fabrica />
+          default:
+            return <FabricaDashboard />
         }
       })()
 
@@ -172,15 +207,22 @@ function AppContent() {
         />
       )}
       
+      {user.role === 'fabrica' && (
+        <FabricaSidebar 
+          onNavigate={handlePageNavigation} 
+          currentPage={currentPage} 
+        />
+      )}
+      
       {/* Main Content with Transition Container */}
-      <div className={`transition-all duration-300 ${(user.role === 'frontman' || user.role === 'admin') ? 'ml-16' : ''}`}>
+      <div className={`transition-all duration-300 ${(user.role === 'frontman' || user.role === 'admin' || user.role === 'fabrica') ? 'ml-16' : ''}`}>
         <div className="page-transition-container main-content-transition">
           {renderCurrentPage()}
         </div>
       </div>
       
       {/* Optional: Loading overlay during transitions */}
-      {isTransitioning && (user.role === 'frontman' || user.role === 'admin') && (
+      {isTransitioning && (user.role === 'frontman' || user.role === 'admin' || user.role === 'fabrica') && (
         <div className="fixed inset-0 pointer-events-none z-10">
           <div className="absolute top-4 right-4">
             <div className="bg-white/80 backdrop-blur-sm rounded-full px-3 py-1 shadow-sm">

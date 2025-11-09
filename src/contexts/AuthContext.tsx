@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { supabase } from '../lib/supabaseClient'
 
-export type UserRole = 'frontman' | 'kitchen' | 'admin'
+export type UserRole = 'frontman' | 'kitchen' | 'admin' | 'fabrica'
 
 interface User {
   id: string
@@ -67,6 +67,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
       return { success: true }
     }
 
+    // Fabrica short-circuit: predefined credentials, no Supabase lookup
+    const isFabricaUser = username?.toString().trim().toLowerCase() === 'fabrica'
+    if (isFabricaUser && password === '123') {
+      const user: User = {
+        id: 'fabrica',
+        username: 'fabrica',
+        role: 'fabrica',
+        name: 'Fábrica'
+      }
+      setUser(user)
+      localStorage.setItem('restaurant-user', JSON.stringify(user))
+      return { success: true }
+    }
+
     try {
       // First, check if user exists
       const { data: userData, error: userError } = await supabase
@@ -111,6 +125,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
         normalizedRole.includes('cocina')
       ) {
         userRole = 'kitchen'
+      } else if (
+        normalizedRole === 'fabrica' ||
+        normalizedRole === 'factory' ||
+        normalizedRole.includes('fabrica')
+      ) {
+        userRole = 'fabrica'
       } else if (
         normalizedRole === 'frontman' ||
         normalizedRole === 'vendedor' ||

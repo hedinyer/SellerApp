@@ -20,7 +20,7 @@ export function Login() {
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
-  const [selectedRole, setSelectedRole] = useState<'user' | 'admin'>('user')
+  const [selectedRole, setSelectedRole] = useState<'user' | 'admin' | 'fabrica'>('user')
   const [isLoggingIn, setIsLoggingIn] = useState(false)
   
   // Ensure username/password are set for default role on mount
@@ -31,6 +31,9 @@ export function Login() {
     } else if (selectedRole === 'admin') {
       setUsername('admin')
       setPassword('Dwell.admin.2025*')
+    } else if (selectedRole === 'fabrica') {
+      setUsername('fabrica')
+      setPassword('123')
     }
     // eslint-disable-next-line
   }, [])
@@ -65,7 +68,7 @@ export function Login() {
   }, [username, password, login])
 
   // Memoize handleRoleQuickSelect
-  const handleRoleQuickSelect = useCallback((role: 'user' | 'admin') => {
+  const handleRoleQuickSelect = useCallback((role: 'user' | 'admin' | 'fabrica') => {
     setSelectedRole(role)
     if (role === 'user') {
       setUsername('vendedor')
@@ -73,6 +76,9 @@ export function Login() {
     } else if (role === 'admin') {
       setUsername('admin')
       setPassword('Dwell.admin.2025*')
+    } else if (role === 'fabrica') {
+      setUsername('fabrica')
+      setPassword('123')
     }
   }, [])
 
@@ -195,6 +201,37 @@ export function Login() {
                 }}
               >
                 <span>Admin</span>
+              </button>
+              {/* Fabrica */}
+              <button
+                type="button"
+                role="tab"
+                aria-selected={selectedRole === 'fabrica'}
+                tabIndex={0}
+                onClick={() => handleRoleQuickSelect('fabrica')}
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                  padding: '0 0 6px 0',
+                  background: 'none',
+                  border: 'none',
+                  color: selectedRole === 'fabrica' ? '#111' : '#888',
+                  fontWeight: selectedRole === 'fabrica' ? 500 : 300,
+                  fontSize: 15,
+                  borderBottom: selectedRole === 'fabrica' ? '3px solid #111' : '3px solid transparent',
+                  outline: 'none',
+                  cursor: 'pointer',
+                  transition: 'color 0.2s, border-bottom 0.3s cubic-bezier(.4,1.2,.4,1)',
+                  minWidth: 0,
+                  zIndex: 2,
+                  backgroundClip: 'padding-box',
+                }}
+              >
+                <span>Fabrica</span>
               </button>
             </div>
           </div>

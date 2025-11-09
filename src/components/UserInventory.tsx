@@ -432,7 +432,18 @@ export function UserInventory() {
       const obj = JSON.parse(value)
       if (obj && typeof obj === 'object' && typeof obj.sku === 'string') sku = obj.sku
     } catch {}
-    const found = items.find(i => i.sku.toLowerCase() === sku.toLowerCase())
+    
+    // Search in main SKU and also in variant SKUs
+    const found = items.find(i => {
+      // Check main SKU
+      if (i.sku.toLowerCase() === sku.toLowerCase()) return true
+      // Check variant SKUs
+      if (i.variants && i.variants.length > 0) {
+        return i.variants.some(v => v.sku && v.sku.toLowerCase() === sku.toLowerCase())
+      }
+      return false
+    })
+    
     if (found) {
       const now = Date.now()
       const last = lastScannedRef.current
