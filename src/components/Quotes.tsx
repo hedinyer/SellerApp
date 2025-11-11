@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useConfig } from '../contexts/ConfigContext'
+import { useAuth } from '../contexts/AuthContext'
 import { supabase, type GarmentRecord } from '../lib/supabaseClient'
 
 type Modification = {
@@ -33,12 +34,19 @@ type SavedQuote = {
   total: number
   notas_cliente: string | null
   estado: string
+  seller: string | null
   created_at: string
   updated_at: string
 }
 
+interface Employee {
+  id: string
+  name: string
+}
+
 export function Quotes() {
   const { formatCurrency } = useConfig()
+  const { user } = useAuth()
 
   const [customerNotes, setCustomerNotes] = useState('')
   const [customerType, setCustomerType] = useState<'natural' | 'empresa'>('natural')
@@ -60,6 +68,9 @@ export function Quotes() {
   const [selectedQuote, setSelectedQuote] = useState<SavedQuote | null>(null)
   const [modalPosition, setModalPosition] = useState({ top: 0 })
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null)
+  // Employees/Vendedor
+  const [employees, setEmployees] = useState<Employee[]>([])
+  const [selectedSellerId, setSelectedSellerId] = useState<string>('')
 
   // Función para actualizar el estado de una cotización
   async function updateQuoteStatus(quoteId: string, newStatus: string) {
@@ -350,6 +361,27 @@ export function Quotes() {
     loadQuotes()
   }, [])
 
+  // Load employees
+  useEffect(() => {
+    async function loadEmployees() {
+      const { data, error } = await supabase
+        .from('employees')
+        .select('id, name, status')
+        .eq('status', 'activo')
+        .order('name', { ascending: true })
+      if (error || !data) return
+      const list: Employee[] = (data as any[]).map(r => ({
+        id: String(r.id),
+        name: String(r.name || 'Sin nombre')
+      }))
+      setEmployees(list)
+      if (list.length > 0) {
+        setSelectedSellerId(prev => prev || list[0].id)
+      }
+    }
+    loadEmployees()
+  }, [])
+
   useEffect(() => {
     async function loadFromDb() {
       const { data, error } = await supabase
@@ -533,6 +565,17 @@ export function Quotes() {
       const pad = (n: number) => String(n).padStart(2, '0')
       const numeroCotizacion = `COT-${quoteDate.getFullYear()}${pad(quoteDate.getMonth() + 1)}${pad(quoteDate.getDate())}-${pad(quoteDate.getHours())}${pad(quoteDate.getMinutes())}${pad(quoteDate.getSeconds())}`
 
+      // Determinar el vendedor: usar el seleccionado, o si es fabrica usar "Fabrica", sino el nombre del usuario
+      let seller: string | null = null
+      if (selectedSellerId) {
+        const selectedEmployee = employees.find(emp => emp.id === selectedSellerId)
+        seller = selectedEmployee?.name || null
+      } else if (user?.role === 'fabrica') {
+        seller = 'Fabrica'
+      } else {
+        seller = user?.name || null
+      }
+
       // Guardar en Supabase
       const { data, error } = await supabase
         .from('cotizaciones')
@@ -545,7 +588,8 @@ export function Quotes() {
           costo_envio: shippingCost || 0,
           total: grandTotal,
           notas_cliente: customerNotes || null,
-          estado: 'pendiente'
+          estado: 'pendiente',
+          seller: seller
         })
         .select()
         .single()
@@ -1256,12 +1300,31 @@ export function Quotes() {
           </div>
         )}
 
-        <div className="mt-3 sm:mt-4 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-2 sm:gap-0">
-          <button
-            className="w-full sm:w-auto border rounded px-3 py-2 bg-black text-white text-xs sm:text-sm"
-            onClick={handleGenerateQuote}
-          >Generar cotización</button>
-          <div className="text-right text-sm sm:text-base lg:text-lg font-extrabold">Total cotización: {formatNumberPlain(grandTotal)}</div>
+        <div className="mt-3 sm:mt-4 flex flex-col gap-2 sm:gap-3">
+          <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-2 sm:gap-3">
+            <div className="flex-1 sm:flex-initial">
+              <label className="text-[10px] text-gray-600 mb-1 block">Vendedor</label>
+              <select 
+                value={selectedSellerId} 
+                onChange={e => setSelectedSellerId(e.target.value)} 
+                className="w-full sm:w-auto min-w-[200px] border rounded px-2 py-1.5 text-xs sm:text-sm bg-white text-black" 
+                disabled={employees.length === 0}
+              >
+                {employees.length === 0 ? (
+                  <option value="">Cargando empleados...</option>
+                ) : (
+                  employees.map(emp => (
+                    <option key={emp.id} value={emp.id}>{emp.name}</option>
+                  ))
+                )}
+              </select>
+            </div>
+            <button
+              className="w-full sm:w-auto border rounded px-3 py-2 bg-black text-white text-xs sm:text-sm"
+              onClick={handleGenerateQuote}
+            >Generar cotización</button>
+            <div className="text-right text-sm sm:text-base lg:text-lg font-extrabold">Total cotización: {formatNumberPlain(grandTotal)}</div>
+          </div>
         </div>
         </div>
       </div>
@@ -1501,7 +1564,7 @@ export function Quotes() {
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 mt-3 sm:mt-4 text-center justify-between">
                   <div className="flex-1">
-                    <div className="text-sm sm:text-base lg:text-lg font-bold text-gray-900 mb-1">—</div>
+                    <div className="text-sm sm:text-base lg:text-lg font-bold text-gray-900 mb-1">{selectedQuote.seller || '—'}</div>
                     <div className="text-[10px] sm:text-xs uppercase tracking-wider text-gray-400 font-medium">Vendedor</div>
                   </div>
                   <div className="flex-1">

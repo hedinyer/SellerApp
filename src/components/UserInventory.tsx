@@ -18,6 +18,7 @@ interface VariantStock {
   color: string
   size: string
   qty: number
+  sku?: string
 }
 
 interface GarmentItem {
@@ -38,7 +39,7 @@ interface GarmentItem {
   variants?: VariantStock[]
 }
 
-const categories = ['Camisas', 'Pantalones', 'Vestidos', 'Sudaderas', 'Playeras', 'Chamarras', 'Faldas', 'Accesorios']
+const categories = ['PANTALONETAS', 'CAMISETAS', 'SUDADERAS', 'BUZOS', 'SHORT', 'TOP', 'LYCRA', 'FALDA']
 
 export function UserInventory() {
   const { formatCurrency, getFontSizeClass } = useConfig()
@@ -74,6 +75,7 @@ export function UserInventory() {
   const lastScannedRef = useRef<{ sku: string, timestamp: number } | null>(null)
   const [lastScanOk, setLastScanOk] = useState<{ sku: string, name: string } | null>(null)
   const [scanCountdown, setScanCountdown] = useState<number>(0)
+  const [modalPosition, setModalPosition] = useState({ top: 0 })
 
   useEffect(() => {
     async function load() {
@@ -181,6 +183,7 @@ export function UserInventory() {
     setFormImageFile(null)
     setFormImagePreviewUrl(null)
     setFormError(null)
+    setModalPosition({ top: window.scrollY + window.innerHeight / 2 })
     setIsFormOpen(true)
   }
 
@@ -192,6 +195,7 @@ export function UserInventory() {
     setFormImageFile(null)
     setFormImagePreviewUrl(null)
     setFormError(null)
+    setModalPosition({ top: window.scrollY + window.innerHeight / 2 })
     setIsFormOpen(true)
   }
 
@@ -306,6 +310,7 @@ export function UserInventory() {
   }
 
   function handleDelete(id: string) {
+    setModalPosition({ top: window.scrollY + window.innerHeight / 2 })
     setDeleteConfirmId(id)
   }
 
@@ -355,6 +360,7 @@ export function UserInventory() {
   }
 
   function openQrModal(id: string) {
+    setModalPosition({ top: window.scrollY + window.innerHeight / 2 })
     setQrForId(id)
   }
 
@@ -395,6 +401,7 @@ export function UserInventory() {
       lastScannedRef.current = null
       setLastScanOk(null)
       setScanCountdown(0)
+      setModalPosition({ top: window.scrollY + window.innerHeight / 2 })
       setIsScanOpen(true)
       await new Promise(r => setTimeout(r, 50))
 
@@ -754,8 +761,15 @@ export function UserInventory() {
 
         {/* Modal Formulario Agregar/Editar */}
         {isFormOpen && (
-          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-2 sm:p-3">
-            <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm p-2 sm:p-3" style={{ overflow: 'auto' }}>
+            <div 
+              className="absolute left-0 right-0 flex items-center justify-center z-10"
+              style={{ 
+                top: `${modalPosition.top}px`,
+                transform: 'translateY(-50%)'
+              }}
+            >
+              <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
               <div className="p-3 sm:p-4 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white z-10">
                 <div>
                   <h3 className="font-bold text-sm sm:text-base text-black">{editingId ? 'Editar prenda' : 'Agregar nueva prenda'}</h3>
@@ -852,13 +866,21 @@ export function UserInventory() {
                 </div>
               </div>
             </div>
+            </div>
           </div>
         )}
 
         {/* Confirmación de eliminación */}
         {deleteConfirmId && (
-          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
-            <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-md p-4 sm:p-5">
+          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm p-3 sm:p-4" style={{ overflow: 'auto' }}>
+            <div 
+              className="absolute left-0 right-0 flex items-center justify-center z-10"
+              style={{ 
+                top: `${modalPosition.top}px`,
+                transform: 'translateY(-50%)'
+              }}
+            >
+              <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-md p-4 sm:p-5">
               <div className="flex items-center gap-2 sm:gap-3 mb-3">
                 <AlertTriangleIcon size={18} className="sm:w-5 sm:h-5 text-red-600 flex-shrink-0" />
                 <h4 className="font-semibold text-sm sm:text-base text-gray-900">¿Estás seguro?</h4>
@@ -869,13 +891,21 @@ export function UserInventory() {
                 <button onClick={confirmDelete} className="w-full sm:w-auto px-3 py-2 rounded bg-red-600 text-white hover:bg-red-700 text-xs sm:text-sm">Eliminar</button>
               </div>
             </div>
+            </div>
           </div>
         )}
 
         {/* Modal Escaneo QR por Cámara */}
         {isScanOpen && (
-          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-2 sm:p-3">
-            <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm p-2 sm:p-3" style={{ overflow: 'auto' }}>
+            <div 
+              className="absolute left-0 right-0 flex items-center justify-center z-10"
+              style={{ 
+                top: `${modalPosition.top}px`,
+                transform: 'translateY(-50%)'
+              }}
+            >
+              <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
               <div className="p-3 sm:p-4 border-b border-gray-100 sticky top-0 bg-white z-10">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-3">
                   <div className="flex-1 min-w-0">
@@ -979,6 +1009,7 @@ export function UserInventory() {
                 </div>
               </div>
             </div>
+            </div>
           </div>
         )}
 
@@ -989,8 +1020,15 @@ export function UserInventory() {
           const payload = { sku: product.sku, category: product.category, color: product.color, size: product.size }
           const qrUrl = getQrUrlForData(payload)
           return (
-            <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
-              <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-sm p-4 sm:p-5">
+            <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm p-3 sm:p-4" style={{ overflow: 'auto' }}>
+              <div 
+                className="absolute left-0 right-0 flex items-center justify-center z-10"
+                style={{ 
+                  top: `${modalPosition.top}px`,
+                  transform: 'translateY(-50%)'
+                }}
+              >
+                <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-sm p-4 sm:p-5">
                 <div className="mb-3">
                   <h4 className="font-semibold text-sm sm:text-base text-gray-900">QR del producto</h4>
                   <p className="text-xs text-gray-600">SKU: {product.sku}</p>
@@ -1006,6 +1044,7 @@ export function UserInventory() {
                     <button onClick={closeQrModal} className="flex-1 sm:flex-none px-3 py-2 border rounded text-gray-700 hover:bg-gray-50 text-xs sm:text-sm">Cerrar</button>
                   </div>
                 </div>
+              </div>
               </div>
             </div>
           )

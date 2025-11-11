@@ -182,19 +182,17 @@ export function AdminEmployees() {
 
   if (isLoading) {
     return (
-      <div className="p-4 lg:p-6">
-        <div className="flex items-center justify-center h-64">
-          <div className="text-center">
-            <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-            <p className="text-gray-600 font-medium">Cargando empleados...</p>
-          </div>
+      <div className="w-screen h-screen min-h-screen min-w-screen p-4 lg:p-6 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600 font-medium">Cargando empleados...</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="p-4 lg:p-6">
+    <div className="w-screen h-screen min-h-screen min-w-screen p-4 lg:p-6 overflow-auto">
       {/* Header */}
       <div className="mb-6 lg:mb-8 animate-fadeInSlide">
         
@@ -264,7 +262,7 @@ export function AdminEmployees() {
       </div>
 
       {/* Employees Table */}
-      <div className="bg-white rounded-[8px] border border-gray-300 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-[8px] border border-gray-300 shadow-sm overflow-hidden mr-6 lg:mr-8">
         {/* Header and Controls */}
         <div className="p-4 border-b border-gray-100">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">

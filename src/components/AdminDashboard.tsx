@@ -21,7 +21,11 @@ interface SalesData {
   week: number
   month: number
   year: number
+  quarter: number
+  semester: number
 }
+
+type PeriodFilter = 'diario' | 'semanal' | 'mensual' | 'trimestral' | 'semestral' | 'anual'
 
 interface EmployeeStats {
   id: string
@@ -91,16 +95,47 @@ const AnimatedDot = ({ cx, cy, index, data, color }: { cx: number, cy: number, i
 export function AdminDashboard() {
   const [isLoading, setIsLoading] = useState(true)
   const { formatCurrency, getFontSizeClass } = useConfig()
-  const [salesData, setSalesData] = useState<SalesData>({ today: 0, week: 0, month: 0, year: 0 })
+  const [salesData, setSalesData] = useState<SalesData>({ today: 0, week: 0, month: 0, year: 0, quarter: 0, semester: 0 })
   const [customerStats, setCustomerStats] = useState<CustomerStats>({ totalToday: 0, totalWeek: 0, totalMonth: 0, avgTableTime: '-', returnRate: 0, satisfaction: 0 })
   const [employeeStats, setEmployeeStats] = useState<EmployeeStats[]>([])
   const [topDishes, setTopDishes] = useState<DishStats[]>([])
   const [leastPopularDishes, setLeastPopularDishes] = useState<DishStats[]>([])
+  const [selectedPeriod, setSelectedPeriod] = useState<PeriodFilter>('diario')
 
   useEffect(() => {
     const timer = setTimeout(() => setIsLoading(false), 300)
     return () => clearTimeout(timer)
   }, [])
+
+  // Helper function to get start date based on period
+  const getStartDateForPeriod = (period: PeriodFilter): Date => {
+    const now = new Date()
+    const startOfToday = new Date(now); startOfToday.setHours(0,0,0,0)
+    
+    switch (period) {
+      case 'diario':
+        return startOfToday
+      case 'semanal':
+        const startOfWeek = new Date(startOfToday); startOfWeek.setDate(startOfToday.getDate() - 6)
+        return startOfWeek
+      case 'mensual':
+        const startOfMonth = new Date(startOfToday); startOfMonth.setDate(1)
+        return startOfMonth
+      case 'trimestral':
+        const currentQuarter = Math.floor(now.getMonth() / 3)
+        const startOfQuarter = new Date(startOfToday); startOfQuarter.setMonth(currentQuarter * 3, 1)
+        return startOfQuarter
+      case 'semestral':
+        const currentSemester = Math.floor(now.getMonth() / 6)
+        const startOfSemester = new Date(startOfToday); startOfSemester.setMonth(currentSemester * 6, 1)
+        return startOfSemester
+      case 'anual':
+        const startOfYear = new Date(startOfToday); startOfYear.setMonth(0,1)
+        return startOfYear
+      default:
+        return startOfToday
+    }
+  }
 
   useEffect(() => {
     async function loadDashboard() {
@@ -110,17 +145,26 @@ export function AdminDashboard() {
         const startOfToday = new Date(now); startOfToday.setHours(0,0,0,0)
         const startOfWeek = new Date(startOfToday); startOfWeek.setDate(startOfToday.getDate() - 6)
         const startOfMonth = new Date(startOfToday); startOfMonth.setDate(1)
+        
+        // Calculate quarter start (Q1: Jan-Mar, Q2: Apr-Jun, Q3: Jul-Sep, Q4: Oct-Dec)
+        const currentQuarter = Math.floor(now.getMonth() / 3)
+        const startOfQuarter = new Date(startOfToday); startOfQuarter.setMonth(currentQuarter * 3, 1)
+        
+        // Calculate semester start (H1: Jan-Jun, H2: Jul-Dec)
+        const currentSemester = Math.floor(now.getMonth() / 6)
+        const startOfSemester = new Date(startOfToday); startOfSemester.setMonth(currentSemester * 6, 1)
+        
         const startOfYear = new Date(startOfToday); startOfYear.setMonth(0,1)
 
-        // Pull recent window for computations (last 60 days)
-        const since60d = new Date(startOfToday); since60d.setDate(startOfToday.getDate() - 60)
+        // Pull recent window for computations (last 365 days to cover all periods)
+        const since365d = new Date(startOfToday); since365d.setDate(startOfToday.getDate() - 365)
 
         const { data: salesRows } = await supabase
           .from('sales')
           .select('id, created_at, subtotal, discount, total, items, payments, customer, seller')
-          .gte('created_at', since60d.toISOString())
+          .gte('created_at', since365d.toISOString())
           .order('created_at', { ascending: false })
-          .limit(5000)
+          .limit(10000)
 
         const rows = (salesRows || []) as any[]
 
@@ -152,6 +196,8 @@ export function AdminDashboard() {
           today: sumInRange(startOfToday),
           week: sumInRange(startOfWeek),
           month: sumInRange(startOfMonth),
+          quarter: sumInRange(startOfQuarter),
+          semester: sumInRange(startOfSemester),
           year: sumInRange(startOfYear)
         })
 
@@ -166,9 +212,55 @@ export function AdminDashboard() {
           satisfaction: 0
         })
 
-        // Per-seller today
+        // Store parsed data for period-based calculations
+        // We'll calculate employee stats and products based on selectedPeriod in a separate effect
+      } finally {
+        setIsLoading(false)
+      }
+    }
+    loadDashboard()
+  }, [])
+
+  // Recalculate employee stats and products based on selected period
+  useEffect(() => {
+    async function recalculateByPeriod() {
+      if (isLoading) return
+      
+      try {
+        const startDate = getStartDateForPeriod(selectedPeriod)
+        const since365d = new Date(); since365d.setDate(since365d.getDate() - 365)
+
+        const { data: salesRows } = await supabase
+          .from('sales')
+          .select('id, created_at, subtotal, discount, total, items, payments, customer, seller')
+          .gte('created_at', since365d.toISOString())
+          .order('created_at', { ascending: false })
+          .limit(10000)
+
+        const rows = (salesRows || []) as any[]
+
+        // Normalize JSON fields that may arrive as strings
+        const parsed = rows.map(r => {
+          const parseJson = (v: any) => {
+            if (!v) return undefined
+            try { return typeof v === 'string' ? JSON.parse(v) : v } catch { return undefined }
+          }
+          return {
+            id: r.id as string,
+            created_at: r.created_at as string,
+            subtotal: Number(r.subtotal) || 0,
+            discount: Number(r.discount) || 0,
+            total: Number(r.total) || 0,
+            items: (parseJson(r.items) as any[]) || [],
+            payments: (parseJson(r.payments) as any[]) || [],
+            customer: parseJson(r.customer) as any | undefined,
+            seller: r.seller as string | undefined
+          }
+        })
+
+        // Per-seller stats for selected period
         const bySeller = new Map<string, { servicesCount: number, total: number, items: number }>()
-        parsed.filter(s => new Date(s.created_at) >= startOfToday).forEach(s => {
+        parsed.filter(s => new Date(s.created_at) >= startDate).forEach(s => {
           const key = s.seller || 'Sin vendedor'
           const curr = bySeller.get(key) || { servicesCount: 0, total: 0, items: 0 }
           curr.servicesCount += 1
@@ -193,9 +285,9 @@ export function AdminDashboard() {
         }))
         setEmployeeStats(sellerStats)
 
-        // Aggregate items sold today for top/least dishes
+        // Aggregate items sold for selected period for top/least dishes
         const aggByKey = new Map<string, { name: string, sku?: string, quantity: number, revenue: number }>()
-        parsed.filter(s => new Date(s.created_at) >= startOfMonth).forEach(s => {
+        parsed.filter(s => new Date(s.created_at) >= startDate).forEach(s => {
           (s.items || []).forEach((it: any) => {
             const sku = it.sku as string | undefined
             const name = (it.name as string) || sku || 'Producto'
@@ -249,12 +341,12 @@ export function AdminDashboard() {
 
         setTopDishes(top)
         setLeastPopularDishes(bottom)
-      } finally {
-        setIsLoading(false)
+      } catch (error) {
+        console.error('Error recalculating by period:', error)
       }
     }
-    loadDashboard()
-  }, [])
+    recalculateByPeriod()
+  }, [selectedPeriod, isLoading])
 
   const getTrendIcon = (trend: string) => {
     switch (trend) {
@@ -297,6 +389,54 @@ export function AdminDashboard() {
     const v = Math.round(salesData.year)
     return [0.78, 0.86, 0.9, 0.95, 1, 0.98, 1].map(p => ({ v: Math.round(v * p) }))
   }, [salesData.year])
+  const chartDataSalesQuarter = useMemo(() => {
+    const v = Math.round(salesData.quarter)
+    return [0.7, 0.85, 0.9, 0.95, 1, 0.98, 1].map(p => ({ v: Math.round(v * p) }))
+  }, [salesData.quarter])
+  const chartDataSalesSemester = useMemo(() => {
+    const v = Math.round(salesData.semester)
+    return [0.75, 0.85, 0.9, 0.95, 1, 0.98, 1].map(p => ({ v: Math.round(v * p) }))
+  }, [salesData.semester])
+
+  // Etiquetas para los ejes X de los charts de ventas
+  const daysLabels = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
+  const weekLabels = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
+  const monthLabels = ['Semana 1', 'Semana 2', 'Semana 3', 'Semana 4', 'Semana 5', 'Semana 6', 'Semana 7']
+  const quarterLabels = ['Mes 1', 'Mes 2', 'Mes 3', 'Mes 4', 'Mes 5', 'Mes 6', 'Mes 7']
+  const semesterLabels = ['Mes 1', 'Mes 2', 'Mes 3', 'Mes 4', 'Mes 5', 'Mes 6', 'Mes 7']
+  const yearLabels = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul']
+
+  // Get current period data and labels based on selected filter
+  const getCurrentPeriodData = () => {
+    switch (selectedPeriod) {
+      case 'diario':
+        return { value: salesData.today, chartData: chartDataSalesToday, labels: daysLabels, title: 'Hoy', subtitle: 'Ventas del día', color: 'rgba(34,197,94,0.15)', stroke: '#34d399' }
+      case 'semanal':
+        return { value: salesData.week, chartData: chartDataSalesWeek, labels: weekLabels, title: 'Semana', subtitle: 'Últimos 7 días', color: 'rgba(59,130,246,0.15)', stroke: '#3b82f6' }
+      case 'mensual':
+        return { value: salesData.month, chartData: chartDataSalesMonth, labels: monthLabels, title: 'Mes', subtitle: 'Mes actual', color: 'rgba(251,146,60,0.15)', stroke: '#fb923c' }
+      case 'trimestral':
+        return { value: salesData.quarter, chartData: chartDataSalesQuarter, labels: quarterLabels, title: 'Trimestre', subtitle: 'Trimestre actual', color: 'rgba(236,72,153,0.15)', stroke: '#ec4899' }
+      case 'semestral':
+        return { value: salesData.semester, chartData: chartDataSalesSemester, labels: semesterLabels, title: 'Semestre', subtitle: 'Semestre actual', color: 'rgba(139,92,246,0.15)', stroke: '#8b5cf6' }
+      case 'anual':
+        return { value: salesData.year, chartData: chartDataSalesYear, labels: yearLabels, title: 'Año', subtitle: 'Año en curso', color: 'rgba(168,85,247,0.15)', stroke: '#a855f7' }
+      default:
+        return { value: salesData.today, chartData: chartDataSalesToday, labels: daysLabels, title: 'Hoy', subtitle: 'Ventas del día', color: 'rgba(34,197,94,0.15)', stroke: '#34d399' }
+    }
+  }
+
+  const currentPeriodData = getCurrentPeriodData()
+
+  // Calculate average ticket based on selected period
+  const averageTicketForPeriod = useMemo(() => {
+    const periodValue = currentPeriodData.value
+    // Use employeeStats to calculate count (servicesCount represents sales count)
+    const totalServices = employeeStats.reduce((sum, emp) => sum + emp.servicesCount, 0)
+    const count = Math.max(1, totalServices)
+    return count > 0 ? periodValue / count : 0
+  }, [selectedPeriod, currentPeriodData.value, employeeStats])
+  
   const averageTicketToday = useMemo(() => {
     const count = Math.max(1, customerStats.totalToday || 0)
     return (salesData.today || 0) / count
@@ -305,12 +445,6 @@ export function AdminDashboard() {
     const v = Math.round(averageTicketToday)
     return [0.7, 0.8, 0.75, 0.85, 0.9, 0.82, 1].map(p => ({ v: Math.max(0, Math.round(v * p)) }))
   }, [averageTicketToday])
-
-  // Etiquetas para los ejes X de los charts de ventas
-  const daysLabels = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
-  const weekLabels = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
-  const monthLabels = ['Semana 1', 'Semana 2', 'Semana 3', 'Semana 4', 'Semana 5', 'Semana 6', 'Semana 7']
-  const yearLabels = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul']
 
   return (
     <div 
@@ -328,105 +462,51 @@ export function AdminDashboard() {
               <h2 className="text-lg lg:text-xl font-bold text-gray-900">Resumen de Ventas</h2>
               <p className="text-xs lg:text-sm text-gray-600 font-normal mt-1">Visión general de las ventas del día, semana, mes y año</p>
             </div>
-            <div className="grid grid-cols-2 lg:flex lg:justify-center gap-3 lg:gap-4">
-              {/* Resumen de Ventas */}
-          <div className="w-full lg:w-64">
-            <SpotlightCard spotlightColor="rgba(0, 0, 0, 0.08)">
-              <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-between config-font-medium metallic-bg" style={{ animationDelay: '0ms', boxShadow: '0 4px 16px 0 rgba(34,197,94,0.15)' }}>
-                <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                <div className="flex flex-col justify-between h-full relative z-10">
-                  <div className="flex flex-col items-center justify-center pt-1 pb-2">
-                    <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">Hoy</h3>
-                    <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{formatCurrency(salesData.today)}</p>
-                    <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">Ventas del día</p>
-                    </div>
-                  <div className="w-full px-2 h-10 xl:h-12 flex items-end">
-                    <ResponsiveContainer width="100%" height={48}>
-                      <LineChart data={chartDataSalesToday.map((d, i) => ({ ...d, label: daysLabels[i] }))} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
-                        <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
-                        <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                        <YAxis hide />
-                        <Line type="monotone" dataKey="v" stroke="#34d399" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                  </div>
-                </div>
-              </SpotlightCard>
+            
+            {/* Filtros de período */}
+            <div className="mb-4 flex flex-wrap gap-2 justify-center">
+              {(['diario', 'semanal', 'mensual', 'trimestral', 'semestral', 'anual'] as PeriodFilter[]).map((period) => (
+                <button
+                  key={period}
+                  onClick={() => setSelectedPeriod(period)}
+                  className={`px-3 py-1.5 rounded-lg text-xs lg:text-sm font-medium transition-all duration-200 ${
+                    selectedPeriod === period
+                      ? 'bg-gray-900 text-white shadow-md'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  {period.charAt(0).toUpperCase() + period.slice(1)}
+                </button>
+              ))}
             </div>
-          <div className="w-full lg:w-64">
-            <SpotlightCard spotlightColor="rgba(0, 0, 0, 0.08)">
-              <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-between config-font-medium metallic-bg" style={{ animationDelay: '100ms', boxShadow: '0 4px 16px 0 rgba(59,130,246,0.15)' }}>
-                <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                <div className="flex flex-col justify-between h-full relative z-10">
-                  <div className="flex flex-col items-center justify-center pt-1 pb-2">
-                    <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">Semana</h3>
-                    <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{formatCurrency(salesData.week)}</p>
-                    <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">Últimos 7 días</p>
+
+            {/* Tarjeta de resumen según el período seleccionado */}
+            <div className="flex justify-center">
+              <div className="w-full lg:w-64">
+                <SpotlightCard spotlightColor="rgba(0, 0, 0, 0.08)">
+                  <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-between config-font-medium metallic-bg" style={{ animationDelay: '0ms', boxShadow: `0 4px 16px 0 ${currentPeriodData.color}` }}>
+                    <div className="absolute inset-0 pointer-events-none metallic-shine" />
+                    <div className="flex flex-col justify-between h-full relative z-10">
+                      <div className="flex flex-col items-center justify-center pt-1 pb-2">
+                        <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">{currentPeriodData.title}</h3>
+                        <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{formatCurrency(currentPeriodData.value)}</p>
+                        <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">{currentPeriodData.subtitle}</p>
+                      </div>
+                      <div className="w-full px-2 h-10 xl:h-12 flex items-end">
+                        <ResponsiveContainer width="100%" height={48}>
+                          <LineChart data={currentPeriodData.chartData.map((d, i) => ({ ...d, label: currentPeriodData.labels[i] }))} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
+                            <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
+                            <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                            <YAxis hide />
+                            <Line type="monotone" dataKey="v" stroke={currentPeriodData.stroke} strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
                     </div>
-                  <div className="w-full px-2 h-10 xl:h-12 flex items-end">
-                    <ResponsiveContainer width="100%" height={48}>
-                      <LineChart data={chartDataSalesWeek.map((d, i) => ({ ...d, label: weekLabels[i] }))} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
-                        <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
-                        <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                        <YAxis hide />
-                        <Line type="monotone" dataKey="v" stroke="#3b82f6" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
-                      </LineChart>
-                    </ResponsiveContainer>
                   </div>
-                  </div>
-                </div>
-              </SpotlightCard>
+                </SpotlightCard>
+              </div>
             </div>
-          <div className="w-full lg:w-64">
-            <SpotlightCard spotlightColor="rgba(0, 0, 0, 0.08)">
-              <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-between config-font-medium metallic-bg" style={{ animationDelay: '200ms', boxShadow: '0 4px 16px 0 rgba(251,146,60,0.15)' }}>
-                <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                <div className="flex flex-col justify-between h-full relative z-10">
-                  <div className="flex flex-col items-center justify-center pt-1 pb-2">
-                    <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">Mes</h3>
-                    <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{formatCurrency(salesData.month)}</p>
-                    <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">Mes actual</p>
-                    </div>
-                  <div className="w-full px-2 h-10 xl:h-12 flex items-end">
-                    <ResponsiveContainer width="100%" height={48}>
-                      <LineChart data={chartDataSalesMonth.map((d, i) => ({ ...d, label: monthLabels[i] }))} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
-                        <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
-                        <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                        <YAxis hide />
-                        <Line type="monotone" dataKey="v" stroke="#fb923c" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                  </div>
-                </div>
-              </SpotlightCard>
-            </div>
-          <div className="w-full lg:w-64">
-            <SpotlightCard spotlightColor="rgba(0, 0, 0, 0.08)">
-              <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-between config-font-medium metallic-bg" style={{ animationDelay: '300ms', boxShadow: '0 4px 16px 0 rgba(168,85,247,0.15)' }}>
-                <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                <div className="flex flex-col justify-between h-full relative z-10">
-                  <div className="flex flex-col items-center justify-center pt-1 pb-2">
-                    <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">Año</h3>
-                    <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{formatCurrency(salesData.year)}</p>
-                    <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">Año en curso</p>
-                    </div>
-                  <div className="w-full px-2 h-10 xl:h-12 flex items-end">
-                    <ResponsiveContainer width="100%" height={48}>
-                      <LineChart data={chartDataSalesYear.map((d, i) => ({ ...d, label: yearLabels[i] }))} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
-                        <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
-                        <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                        <YAxis hide />
-                        <Line type="monotone" dataKey="v" stroke="#a855f7" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                  </div>
-                </div>
-              </SpotlightCard>
-            </div>
-          </div>
           </div>
         </div>
 
@@ -441,7 +521,9 @@ export function AdminDashboard() {
               <h2 className="text-lg lg:text-xl font-bold text-gray-900 text-center">Resumen del Personal</h2>
               <div className="text-xs text-gray-500 font-normal text-center mt-1">{new Date().toLocaleDateString('es-ES')}</div>
             </div>
-            <p className="text-xs lg:text-sm text-gray-600 font-normal mb-4 text-center">Indicadores clave del equipo en el día actual</p>
+            <p className="text-xs lg:text-sm text-gray-600 font-normal mb-4 text-center">
+              Indicadores clave del equipo - {selectedPeriod.charAt(0).toUpperCase() + selectedPeriod.slice(1)}
+            </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 lg:gap-4">
               {/* Total Servicios */}
               <div className="w-full">
@@ -478,8 +560,8 @@ export function AdminDashboard() {
                     <div className="flex flex-col justify-between h-full relative z-10">
                       <div className="flex flex-col items-center justify-center pt-1 pb-2">
                         <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">Ticket Promedio</h3>
-                        <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{formatCurrency(averageTicketToday)}</p>
-                        <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">Hoy</p>
+                        <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{formatCurrency(averageTicketForPeriod)}</p>
+                        <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">{selectedPeriod.charAt(0).toUpperCase() + selectedPeriod.slice(1)}</p>
                       </div>
                       {/* Mini chart: promedio del día */}
                       <div className="w-full px-2 h-10 xl:h-12 flex items-end">
@@ -536,7 +618,9 @@ export function AdminDashboard() {
               <div className="flex items-center justify-center">
                 <h3 className="text-sm font-medium text-gray-800 text-center">Rendimiento Empleados</h3>
               </div>
-              
+              <p className="text-xs text-gray-600 mt-1 text-center">
+                Período: {selectedPeriod.charAt(0).toUpperCase() + selectedPeriod.slice(1)}
+              </p>
             </div>
             <div className="p-4 h-[400px] overflow-y-auto kitchen-scrollbar">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -570,7 +654,6 @@ export function AdminDashboard() {
                       </div>
                           <div className="flex flex-wrap gap-1 mt-1">
                             <span className="bg-gray-100 text-gray-700 rounded px-1.5 py-0.5 text-[11px]">Servicios: <b>{employee.servicesCount}</b></span>
-                            <span className="bg-gray-100 text-gray-700 rounded px-1.5 py-0.5 text-[11px]">Prom: <b>{employee.avgServiceTime}</b></span>
                       </div>
                     </div>
                       </div>
@@ -626,7 +709,9 @@ export function AdminDashboard() {
               <div className="flex items-center justify-center">
                 <h3 className="text-sm font-medium text-gray-800 text-center">Productos Más Vendidos</h3>
               </div>
-              <p className="text-xs text-gray-600 mt-1 text-center">Más vendidos del mes</p>
+              <p className="text-xs text-gray-600 mt-1 text-center">
+                Más vendidos - {selectedPeriod.charAt(0).toUpperCase() + selectedPeriod.slice(1)}
+              </p>
             </div>
             <div className="p-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -670,7 +755,9 @@ export function AdminDashboard() {
               <div className="flex items-center justify-center">
                 <h3 className="text-sm font-medium text-gray-800 text-center">Oportunidades</h3>
               </div>
-              <p className="text-xs text-gray-600 mt-1 text-center">Productos con menor demanda</p>
+              <p className="text-xs text-gray-600 mt-1 text-center">
+                Productos con menor demanda - {selectedPeriod.charAt(0).toUpperCase() + selectedPeriod.slice(1)}
+              </p>
             </div>
             <div className="p-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

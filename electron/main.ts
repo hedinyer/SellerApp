@@ -14,12 +14,23 @@ function createWindow(): void {
       nodeIntegration: false,
       contextIsolation: true,
       preload: join(__dirname, 'preload.js'),
+      // Mejoras para el manejo de inputs en Electron
+      spellcheck: false,
+      enableWebSQL: false,
+      // Asegurar que los eventos de teclado funcionen correctamente
+      backgroundThrottling: false,
     },
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#ffffff', // Cambiar a fondo blanco
     title: 'Orderly', // Cambiar el título de la ventana
     icon: join(__dirname, '../public/applogo.ico'), // Agregar el icono
+  })
+
+  // Fix para inputs en Electron: Asegurar que los eventos de teclado se manejen correctamente
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    // Permitir que todos los eventos de teclado se propaguen normalmente
+    // Esto ayuda a que los inputs respondan correctamente
   })
 
   // Load the app

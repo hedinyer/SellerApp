@@ -16,3 +16,5 @@ ON public.OrdenesProduccion(vendor_id);
 -- FOREIGN KEY (vendor_id) REFERENCES public.employees(id)
 -- ON DELETE SET NULL;
 
+
+

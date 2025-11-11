@@ -12,9 +12,7 @@ import {
   UsersIcon,
   HomeIcon,
   LogOutIcon,
-  HistoryIcon,
-  DollarSignIcon,
-  CreditCardIcon
+  HistoryIcon
 } from './icons'
 
 interface AdminSidebarProps {
@@ -113,21 +111,12 @@ export function AdminSidebar({ className = '', onNavigate, currentPage = 'admin-
       }
     },
     {
-      id: 'admin-expenses',
-      title: 'Gastos',
-      icon: <DollarSignIcon size={20} />,
+      id: 'admin-reposition',
+      title: 'Reposicion',
+      icon: <ClipboardIcon size={20} />,
       onClick: () => {
-        setActiveItem('admin-expenses')
-        onNavigate?.('admin-expenses')
-      }
-    },
-    {
-      id: 'admin-debts',
-      title: 'Deudas',
-      icon: <CreditCardIcon size={20} />,
-      onClick: () => {
-        setActiveItem('admin-debts')
-        onNavigate?.('admin-debts')
+        setActiveItem('admin-reposition')
+        onNavigate?.('admin-reposition')
       }
     },
     {
@@ -247,14 +236,11 @@ export function AdminSidebar({ className = '', onNavigate, currentPage = 'admin-
           {/* Empleados */}
           {renderMenuItem(menuItems[1])}
           
-          {/* Gastos */}
+          {/* Reposicion */}
           {renderMenuItem(menuItems[2])}
           
-          {/* Deudas */}
-          {renderMenuItem(menuItems[3])}
-          
           {/* Inventario */}
-          {renderMenuItem(menuItems[4])}
+          {renderMenuItem(menuItems[3])}
         </nav>
 
         {/* Bottom Section */}

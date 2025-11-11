@@ -9,6 +9,7 @@ import { AdminEmployees } from './components/AdminEmployees'
 import { AdminExpenses } from './components/AdminExpenses'
 import { AdminDebts } from './components/AdminDebts'
 import { AdminInventory } from './components/AdminInventory'
+import { AdminReposition } from './components/AdminReposition'
 import { UserInventory } from './components/UserInventory'
 import { FabricaInventory } from './components/FabricaInventory'
 import { TakeOrder } from './components/TakeOrder'
@@ -24,6 +25,7 @@ import { Fabrica } from './components/Fabrica'
 import { ConfigProvider } from './contexts/ConfigContext'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { OrderProvider } from './contexts/OrderContext'
+import { InputFixProvider } from './hooks/useInputFix'
 import './components/animations.css'
 import './components/config-styles.css'
 
@@ -87,6 +89,8 @@ function AppContent() {
             return <AdminDebts />
           case 'admin-inventory':
             return <AdminInventory />
+          case 'admin-reposition':
+            return <AdminReposition />
           case 'admin-settings':
             return <Settings />
           default:
@@ -243,7 +247,9 @@ function App() {
     <AuthProvider>
       <ConfigProvider>
         <OrderProvider>
-          <AppContent />
+          <InputFixProvider>
+            <AppContent />
+          </InputFixProvider>
         </OrderProvider>
       </ConfigProvider>
     </AuthProvider>

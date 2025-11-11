@@ -36,6 +36,21 @@ export type ClienteRecord = {
   updated_at: string | null
 }
 
+export type SolicitudReposicionRecord = {
+  id: string
+  garment_id: string
+  sku: string
+  producto_nombre: string
+  cantidad_actual: number
+  umbral: number
+  cantidad_solicitada: number | null
+  estado: 'pendiente' | 'en_proceso' | 'completada' | 'cancelada'
+  solicitado_por: string | null
+  notas: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
 export async function uploadProductImage(file: File, sku: string): Promise<string | null> {
   const ext = file.name.split('.').pop() || 'jpg'
   const path = `products/${sku}-${crypto.randomUUID()}.${ext}`

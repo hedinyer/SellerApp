@@ -793,4 +793,73 @@ code {
 }
 .dark .apple-scrollbar::-webkit-scrollbar-track {
   background: #18181b;
+}
+
+/* ===== FIX PARA INPUTS EN ELECTRON ===== */
+/* Asegurar que los inputs respondan correctamente en Electron, especialmente en Windows */
+input,
+textarea,
+[contenteditable="true"] {
+  /* Forzar que los elementos sean interactivos */
+  -webkit-user-select: text;
+  user-select: text;
+  /* Asegurar que el cursor se muestre correctamente */
+  cursor: text;
+  /* Mejorar el manejo de focus */
+  outline-offset: 2px;
+}
+
+/* Asegurar que los inputs tengan el comportamiento correcto al hacer focus */
+input:focus,
+textarea:focus,
+[contenteditable="true"]:focus {
+  /* Forzar que el elemento esté realmente enfocado */
+  outline: 2px solid rgba(59, 130, 246, 0.5);
+  outline-offset: 2px;
+  /* Asegurar que el elemento sea seleccionable */
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Mejorar el comportamiento de los inputs cuando están deshabilitados */
+input:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* Asegurar que los inputs de tipo number funcionen correctamente */
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Mejorar el comportamiento de los inputs en modales y overlays */
+.modal input,
+.modal textarea,
+[role="dialog"] input,
+[role="dialog"] textarea {
+  /* Asegurar que los inputs en modales funcionen correctamente */
+  pointer-events: auto;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Fix específico para Electron: asegurar que los eventos de teclado se propaguen */
+body {
+  /* Permitir que todos los eventos de teclado se manejen correctamente */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+body input,
+body textarea,
+body [contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
 } 

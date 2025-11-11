@@ -123,6 +123,7 @@ export function PaymentHistory() {
   const [isDetailOpen, setIsDetailOpen] = useState(false)
   const [isReturnOpen, setIsReturnOpen] = useState(false)
   const [logoBase64, setLogoBase64] = useState<string>('')
+  const [modalPosition, setModalPosition] = useState({ top: 0 })
   const { t, getFontSizeClass } = useConfig()
   const { user } = useAuth()
 
@@ -428,6 +429,7 @@ export function PaymentHistory() {
 
   const openSaleDetail = (sale: SaleRecord) => {
     setSelectedSale(sale)
+    setModalPosition({ top: window.scrollY + window.innerHeight / 2 })
     setIsDetailOpen(true)
   }
 
@@ -1105,13 +1107,20 @@ export function PaymentHistory() {
 
       {/* Modal Detalle de Venta */}
       {isDetailOpen && selectedSale && (
-        <div className="fixed inset-0 z-50 p-2 sm:p-4 lg:p-6 flex justify-center items-start pt-8 sm:pt-12" style={{ overflow: 'auto' }}>
+        <div className="fixed inset-0 z-50 p-2 sm:p-4 lg:p-6" style={{ overflow: 'auto' }}>
           {/* Blur overlay */}
           <div className="fixed inset-0 bg-white/20 backdrop-blur-[2px] z-0 transition-all duration-300" />
           {/* Modal centrado */}
           <div 
-            className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-3xl max-h-[calc(100vh-4rem)] sm:max-h-[calc(100vh-6rem)] overflow-y-auto flex flex-col z-10 relative mb-4 sm:mb-6"
+            className="absolute left-0 right-0 flex items-center justify-center z-10"
+            style={{ 
+              top: `${modalPosition.top}px`,
+              transform: 'translateY(-50%)'
+            }}
           >
+            <div 
+              className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-3xl max-h-[calc(100vh-4rem)] sm:max-h-[calc(100vh-6rem)] overflow-y-auto flex flex-col relative mb-4 sm:mb-6"
+            >
             {/* Header */}
             <div className="px-3 sm:px-6 pt-4 sm:pt-6 pb-3 sm:pb-4 border-b border-gray-100 bg-white sticky top-0 z-10">
               <div className="flex flex-col gap-2">
@@ -1229,6 +1238,7 @@ export function PaymentHistory() {
                   <button onClick={closeSaleDetail} className="w-full sm:w-auto px-4 sm:px-6 py-2 rounded-lg bg-gray-900 text-white font-bold text-xs sm:text-sm lg:text-base">Cerrar</button>
                 </div>
               </div>
+            </div>
             </div>
           </div>
         </div>

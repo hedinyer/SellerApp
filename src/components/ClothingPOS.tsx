@@ -87,7 +87,7 @@ type DbSaleRow = {
   seller: string | null
 }
 
-const categories = ['Vestidos', 'Jeans', 'Camisas', 'Playeras', 'Sudaderas', 'Chamarras', 'Faldas', 'Accesorios']
+const categories = ['PANTALONETAS', 'CAMISETAS', 'SUDADERAS', 'BUZOS', 'SHORT', 'TOP', 'LYCRA', 'FALDA']
 
 const INVENTORY_KEY = 'clothing-pos-inventory'
 const SALES_KEY = 'clothing-pos-sales'

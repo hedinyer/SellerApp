@@ -3,6 +3,7 @@ import './animations.css'
 import './config-styles.css'
 import SpotlightCard from './SpotlightCard'
 import { useConfig } from '../contexts/ConfigContext'
+import { useAuth } from '../contexts/AuthContext'
 import {
   ClockIcon,
   TableIcon,
@@ -146,7 +147,9 @@ export function Dashboard() {
     return Math.round(((todaySalesTotal - yesterdaySalesTotal) / yesterdaySalesTotal) * 100)
   }, [todaySalesTotal, yesterdaySalesTotal])
 
-  const [inventoryCritical, setInventoryCritical] = useState<{ name: string, sku: string, qty: number, threshold: number, imageUrl?: string }[]>([])
+  const [inventoryCritical, setInventoryCritical] = useState<{ id: string, name: string, sku: string, qty: number, threshold: number, imageUrl?: string, estadoReposicion?: string, cantidadSolicitada?: number | null }[]>([])
+  const [cantidadesSolicitadas, setCantidadesSolicitadas] = useState<Map<string, number>>(new Map())
+  const { user } = useAuth()
 
   const [recentSales, setRecentSales] = useState<{ time: string, folio: string, seller?: string, items: { name: string, qty: number, variantLabel?: string }[], total: number, payments: DbPaymentPart[] }[]>([])
 
@@ -177,7 +180,7 @@ export function Dashboard() {
         // 1) Garments - inventory crítico
         const { data: garmentsData } = await supabase
           .from('garments')
-          .select('name, sku, category, price, qty, low_stock_threshold, image_url')
+          .select('id, name, sku, category, price, qty, low_stock_threshold, image_url')
           .order('name', { ascending: true })
 
         if (garmentsData) {
@@ -189,8 +192,39 @@ export function Dashboard() {
           } catch {}
           const crit = (garmentsData as any[])
             .filter(g => typeof g.qty === 'number' && typeof g.low_stock_threshold === 'number' && g.qty < g.low_stock_threshold)
-            .map(g => ({ name: g.name as string, sku: g.sku as string, qty: Number(g.qty), threshold: Number(g.low_stock_threshold), imageUrl: g.image_url as string | undefined }))
-          setInventoryCritical(crit)
+            .map(g => ({ id: g.id as string, name: g.name as string, sku: g.sku as string, qty: Number(g.qty), threshold: Number(g.low_stock_threshold), imageUrl: g.image_url as string | undefined }))
+          
+          // Consultar estados de reposición para cada producto crítico
+          const garmentIds = crit.map(p => p.id)
+          if (garmentIds.length > 0) {
+            const { data: solicitudesData } = await supabase
+              .from('solicitudes_reposicion')
+              .select('garment_id, estado, cantidad_solicitada, created_at')
+              .in('garment_id', garmentIds)
+              .order('created_at', { ascending: false })
+            
+            // Crear un mapa de garment_id -> estado y cantidad_solicitada más reciente
+            const estadoMap = new Map<string, string>()
+            const cantidadMap = new Map<string, number | null>()
+            if (solicitudesData) {
+              for (const sol of solicitudesData as any[]) {
+                if (!estadoMap.has(sol.garment_id)) {
+                  estadoMap.set(sol.garment_id, sol.estado)
+                  cantidadMap.set(sol.garment_id, sol.cantidad_solicitada ?? null)
+                }
+              }
+            }
+            
+            // Agregar el estado y cantidad solicitada a cada producto crítico
+            const critWithEstado = crit.map(p => ({
+              ...p,
+              estadoReposicion: estadoMap.get(p.id),
+              cantidadSolicitada: cantidadMap.get(p.id) ?? null
+            }))
+            setInventoryCritical(critWithEstado)
+          } else {
+            setInventoryCritical(crit)
+          }
           ;(window as any).__garmentMetaBySku = metaBySku
         }
 
@@ -266,7 +300,7 @@ export function Dashboard() {
           const created = new Date(s.created_at)
           const hh = created.getHours().toString().padStart(2, '0')
           const mm = created.getMinutes().toString().padStart(2, '0')
-          const items = (s.items || []).map(i => ({ name: i.name, qty: Number(i.quantity || 0), variantLabel: i.variantLabel }))
+          const items = (s.items || []).map((i: DbCartLine) => ({ name: i.name, qty: Number(i.quantity || 0), variantLabel: i.variantLabel }))
           // Defensive parsing: payments may come as array, object, or JSON string
           const raw = (s as any).payments
           let paymentsArr: any[] = []
@@ -309,6 +343,108 @@ export function Dashboard() {
 
     loadData()
   }, [])
+
+  const getEstadoBadge = (estado?: string) => {
+    if (!estado) {
+      return <span className="text-xs text-gray-500">-</span>
+    }
+    
+    const estadoLower = estado.toLowerCase()
+    let bgColor = 'bg-gray-100'
+    let textColor = 'text-gray-700'
+    let label = estado
+    
+    if (estadoLower === 'pendiente') {
+      bgColor = 'bg-yellow-100'
+      textColor = 'text-yellow-700'
+      label = 'Pendiente'
+    } else if (estadoLower === 'en_proceso') {
+      bgColor = 'bg-blue-100'
+      textColor = 'text-blue-700'
+      label = 'En proceso'
+    } else if (estadoLower === 'completada') {
+      bgColor = 'bg-green-100'
+      textColor = 'text-green-700'
+      label = 'Completada'
+    } else if (estadoLower === 'cancelada') {
+      bgColor = 'bg-red-100'
+      textColor = 'text-red-700'
+      label = 'Cancelada'
+    }
+    
+    return (
+      <span className={`text-xs px-2 py-1 rounded-full ${bgColor} ${textColor} font-medium`}>
+        {label}
+      </span>
+    )
+  }
+
+  const handleRequestRestock = async (product: { id: string, name: string, sku: string, qty: number, threshold: number }) => {
+    try {
+      const cantidadSolicitada = cantidadesSolicitadas.get(product.id) || null
+      
+      const { error } = await supabase
+        .from('solicitudes_reposicion')
+        .insert({
+          garment_id: product.id,
+          sku: product.sku,
+          producto_nombre: product.name,
+          cantidad_actual: product.qty,
+          umbral: product.threshold,
+          cantidad_solicitada: cantidadSolicitada,
+          solicitado_por: user?.name || user?.username || 'Usuario desconocido',
+          estado: 'pendiente'
+        })
+
+      if (error) {
+        console.error('Error al guardar solicitud de reposición:', error)
+        alert('Error al guardar la solicitud. Por favor, intenta de nuevo.')
+        return
+      }
+
+      alert('Solicitud de reposición guardada correctamente')
+      
+      // Actualizar el estado local sin recargar la página
+      setInventoryCritical(prev => 
+        prev.map(p => 
+          p.id === product.id 
+            ? { ...p, estadoReposicion: 'pendiente', cantidadSolicitada: cantidadSolicitada }
+            : p
+        )
+      )
+      
+      // Limpiar la cantidad solicitada del estado local
+      setCantidadesSolicitadas(prev => {
+        const newMap = new Map(prev)
+        newMap.delete(product.id)
+        return newMap
+      })
+    } catch (error) {
+      console.error('Error inesperado:', error)
+      alert('Error al guardar la solicitud. Por favor, intenta de nuevo.')
+    }
+  }
+  
+  const handleCantidadChange = (productId: string, value: string) => {
+    const numValue = value === '' ? 0 : parseInt(value, 10)
+    if (!isNaN(numValue) && numValue >= 0) {
+      setCantidadesSolicitadas(prev => {
+        const newMap = new Map(prev)
+        if (numValue > 0) {
+          newMap.set(productId, numValue)
+        } else {
+          newMap.delete(productId)
+        }
+        return newMap
+      })
+    }
+  }
+  
+  const isEstadoActivo = (estado?: string) => {
+    if (!estado) return false
+    const estadoLower = estado.toLowerCase()
+    return estadoLower === 'pendiente' || estadoLower === 'en_proceso' || estadoLower === 'completada' || estadoLower === 'cancelada'
+  }
 
   return (
     <div 
@@ -363,6 +499,8 @@ export function Dashboard() {
                   <th className="py-2 px-4 font-medium text-center align-middle">SKU</th>
                   <th className="py-2 px-4 font-medium text-center align-middle">Disponible</th>
                   <th className="py-2 px-4 font-medium text-center align-middle">Umbral</th>
+                  <th className="py-2 px-4 font-medium text-center align-middle">Estado</th>
+                  <th className="py-2 px-4 font-medium text-center align-middle">Cantidad</th>
                   <th className="py-2 px-4 font-medium text-center align-middle">Acción</th>
                 </tr>
               </thead>
@@ -392,7 +530,38 @@ export function Dashboard() {
                     <td className="py-2 px-4 font-semibold text-red-600 text-center align-middle">{p.qty}</td>
                     <td className="py-2 px-4 text-gray-600 text-center align-middle">{p.threshold}</td>
                     <td className="py-2 px-4 text-center align-middle">
-                      <button className="text-xs px-2 py-1 rounded bg-black text-white hover:opacity-90">Solicitar reposición</button>
+                      {getEstadoBadge(p.estadoReposicion)}
+                    </td>
+                    <td className="py-2 px-4 text-center align-middle">
+                      {isEstadoActivo(p.estadoReposicion) ? (
+                        <span className="text-xs font-medium text-gray-900">
+                          {p.cantidadSolicitada !== null && p.cantidadSolicitada !== undefined
+                            ? p.cantidadSolicitada
+                            : '—'}
+                        </span>
+                      ) : (
+                        <input
+                          type="number"
+                          min="1"
+                          value={cantidadesSolicitadas.get(p.id) || ''}
+                          onChange={(e) => handleCantidadChange(p.id, e.target.value)}
+                          placeholder="Cantidad"
+                          className="w-20 text-xs px-2 py-1 border border-gray-300 rounded text-center"
+                        />
+                      )}
+                    </td>
+                    <td className="py-2 px-4 text-center align-middle">
+                      <button 
+                        onClick={() => handleRequestRestock(p)}
+                        disabled={isEstadoActivo(p.estadoReposicion)}
+                        className={`text-xs px-2 py-1 rounded ${
+                          isEstadoActivo(p.estadoReposicion)
+                            ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                            : 'bg-black text-white hover:opacity-90'
+                        }`}
+                      >
+                        {isEstadoActivo(p.estadoReposicion) ? 'Esperando respuesta' : 'Solicitar reposición'}
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -434,8 +603,33 @@ export function Dashboard() {
                       <span className="text-gray-800">{p.threshold}</span>
                     </div>
                   </div>
-                  <button className="w-full text-xs px-3 py-2 rounded bg-black text-white hover:opacity-90">
-                    Solicitar reposición
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-600">Estado: </span>
+                    {getEstadoBadge(p.estadoReposicion)}
+                  </div>
+                  {!isEstadoActivo(p.estadoReposicion) && (
+                    <div>
+                      <label className="text-xs text-gray-600 mb-1 block">Cantidad a solicitar:</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={cantidadesSolicitadas.get(p.id) || ''}
+                        onChange={(e) => handleCantidadChange(p.id, e.target.value)}
+                        placeholder="Cantidad"
+                        className="w-full text-xs px-3 py-2 border border-gray-300 rounded text-center"
+                      />
+                    </div>
+                  )}
+                  <button 
+                    onClick={() => handleRequestRestock(p)}
+                    disabled={isEstadoActivo(p.estadoReposicion)}
+                    className={`w-full text-xs px-3 py-2 rounded ${
+                      isEstadoActivo(p.estadoReposicion)
+                        ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                        : 'bg-black text-white hover:opacity-90'
+                    }`}
+                  >
+                    {isEstadoActivo(p.estadoReposicion) ? 'Esperando respuesta' : 'Solicitar reposición'}
                   </button>
                 </div>
               ))
