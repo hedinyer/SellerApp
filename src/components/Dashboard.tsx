@@ -546,16 +546,16 @@ export function Dashboard() {
                           value={cantidadesSolicitadas.get(p.id) || ''}
                           onChange={(e) => handleCantidadChange(p.id, e.target.value)}
                           placeholder="Cantidad"
-                          className="w-20 text-xs px-2 py-1 border border-gray-300 rounded text-center"
+                          className="w-20 text-xs px-2 py-1 border border-gray-300 rounded text-center bg-white text-black"
                         />
                       )}
                     </td>
                     <td className="py-2 px-4 text-center align-middle">
                       <button 
                         onClick={() => handleRequestRestock(p)}
-                        disabled={isEstadoActivo(p.estadoReposicion)}
+                        disabled={isEstadoActivo(p.estadoReposicion) || !cantidadesSolicitadas.get(p.id) || cantidadesSolicitadas.get(p.id)! <= 0}
                         className={`text-xs px-2 py-1 rounded ${
-                          isEstadoActivo(p.estadoReposicion)
+                          isEstadoActivo(p.estadoReposicion) || !cantidadesSolicitadas.get(p.id) || cantidadesSolicitadas.get(p.id)! <= 0
                             ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
                             : 'bg-black text-white hover:opacity-90'
                         }`}
@@ -616,15 +616,15 @@ export function Dashboard() {
                         value={cantidadesSolicitadas.get(p.id) || ''}
                         onChange={(e) => handleCantidadChange(p.id, e.target.value)}
                         placeholder="Cantidad"
-                        className="w-full text-xs px-3 py-2 border border-gray-300 rounded text-center"
+                        className="w-full text-xs px-3 py-2 border border-gray-300 rounded text-center bg-white text-black"
                       />
                     </div>
                   )}
                   <button 
                     onClick={() => handleRequestRestock(p)}
-                    disabled={isEstadoActivo(p.estadoReposicion)}
+                    disabled={isEstadoActivo(p.estadoReposicion) || !cantidadesSolicitadas.get(p.id) || cantidadesSolicitadas.get(p.id)! <= 0}
                     className={`w-full text-xs px-3 py-2 rounded ${
-                      isEstadoActivo(p.estadoReposicion)
+                      isEstadoActivo(p.estadoReposicion) || !cantidadesSolicitadas.get(p.id) || cantidadesSolicitadas.get(p.id)! <= 0
                         ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
                         : 'bg-black text-white hover:opacity-90'
                     }`}

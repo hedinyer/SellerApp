@@ -79,3 +79,6 @@ COMMENT ON COLUMN public.solicitudes_reposicion.solicitado_por IS 'Usuario que r
 COMMENT ON COLUMN public.solicitudes_reposicion.notas IS 'Notas adicionales sobre la solicitud';
 
 
+
+
+

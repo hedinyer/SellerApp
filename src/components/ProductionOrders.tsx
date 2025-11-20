@@ -201,81 +201,267 @@ export default function ProductionOrders() {
       </div>
 
       {/* Create order */}
-      <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4 mb-3 sm:mb-4">
-        <div className="grid grid-cols-1 sm:grid-cols-6 gap-2">
-          <div className="sm:col-span-2">
-            <label className="text-[10px] text-gray-600 mb-1 block">Título (opcional)</label>
-            <input value={title} onChange={e => setTitle(e.target.value)} className="w-full border rounded px-2 py-1.5 text-xs sm:text-sm bg-white text-black" placeholder="Nombre de la orden" />
-          </div>
-          <div>
-            <label className="text-[10px] text-gray-600 mb-1 block">N° Cotización (opcional)</label>
-            <input value={quoteNumber} onChange={e => setQuoteNumber(e.target.value)} className="w-full border rounded px-2 py-1.5 text-xs sm:text-sm bg-white text-black" placeholder="Ej. COT-00123" />
-          </div>
-          <div>
-            <label className="text-[10px] text-gray-600 mb-1 block">Vendedor</label>
-            <select value={selectedVendorId} onChange={e => setSelectedVendorId(e.target.value)} className="w-full border rounded px-2 py-1.5 text-xs sm:text-sm bg-white text-black" disabled={employees.length === 0}>
-              {employees.length === 0 ? (
-                <option value="">Cargando empleados...</option>
-              ) : (
-                employees.map(emp => (
-                  <option key={emp.id} value={emp.id}>{emp.name}</option>
-                ))
-              )}
-            </select>
-          </div>
-          <div className="sm:col-span-2">
-            <label className="text-[10px] text-gray-600 mb-1 block">Archivo PDF</label>
-            <input type="file" accept="application/pdf" onChange={e => setFile(e.target.files?.[0] || null)} className="w-full border rounded px-2 py-1.5 text-xs sm:text-sm bg-white text-black" />
-          </div>
+      <div className="bg-white rounded-lg border border-gray-200 shadow-sm mb-4 sm:mb-6 overflow-hidden">
+        {/* Header */}
+        <div className="bg-gradient-to-r from-gray-50 to-white border-b border-gray-200 px-4 sm:px-6 py-4">
+          <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-1">Crear nueva orden de producción</h2>
+          <p className="text-xs sm:text-sm text-gray-600">Completa los datos y sube el PDF de la cotización</p>
         </div>
-        <div className="mt-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-          <button onClick={handleAddOrder} disabled={!file} className="border rounded px-3 py-2 text-xs sm:text-sm bg-black text-white disabled:opacity-50 disabled:cursor-not-allowed">Crear orden</button>
-          {file && <div className="text-[11px] sm:text-xs text-gray-600">Seleccionado: {file.name}</div>}
+
+        {/* Form Content */}
+        <div className="p-4 sm:p-6">
+          <div className="space-y-5">
+            {/* Primera fila: Título y Cotización */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
+              <div className="space-y-1.5">
+                <label className="text-xs sm:text-sm font-medium text-gray-700 flex items-center gap-1.5">
+                  <span>Título</span>
+                  <span className="text-gray-400 font-normal text-[10px]">(opcional)</span>
+                </label>
+                <input 
+                  value={title} 
+                  onChange={e => setTitle(e.target.value)} 
+                  className="w-full border border-gray-300 rounded-lg px-3.5 py-2.5 text-sm bg-white text-black placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-black focus:border-black transition-all" 
+                  placeholder="Ej. Orden de producción #001" 
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs sm:text-sm font-medium text-gray-700 flex items-center gap-1.5">
+                  <span>N° Cotización</span>
+                  <span className="text-gray-400 font-normal text-[10px]">(opcional)</span>
+                </label>
+                <input 
+                  value={quoteNumber} 
+                  onChange={e => setQuoteNumber(e.target.value)} 
+                  className="w-full border border-gray-300 rounded-lg px-3.5 py-2.5 text-sm bg-white text-black placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-black focus:border-black transition-all" 
+                  placeholder="Ej. COT-20240101-001" 
+                />
+              </div>
+            </div>
+
+            {/* Segunda fila: Vendedor y Archivo PDF */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
+              <div className="space-y-1.5">
+                <label className="text-xs sm:text-sm font-medium text-gray-700">
+                  Vendedor
+                </label>
+                <div className="relative">
+                  <select 
+                    value={selectedVendorId} 
+                    onChange={e => setSelectedVendorId(e.target.value)} 
+                    className="w-full border border-gray-300 rounded-lg px-3.5 py-2.5 text-sm bg-white text-black focus:outline-none focus:ring-2 focus:ring-black focus:border-black transition-all appearance-none pr-8 disabled:bg-gray-50 disabled:text-gray-500" 
+                    disabled={employees.length === 0}
+                  >
+                    {employees.length === 0 ? (
+                      <option value="">Cargando empleados...</option>
+                    ) : (
+                      employees.map(emp => (
+                        <option key={emp.id} value={emp.id}>{emp.name}</option>
+                      ))
+                    )}
+                  </select>
+                  <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs sm:text-sm font-medium text-gray-700 flex items-center gap-1.5">
+                  <span>Archivo PDF</span>
+                  <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <label className="flex flex-col items-center justify-center w-full border-2 border-dashed border-gray-300 rounded-lg px-4 py-6 bg-gray-50 hover:bg-gray-100 hover:border-gray-400 transition-all cursor-pointer group">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <svg className="w-8 h-8 text-gray-400 group-hover:text-gray-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                      </svg>
+                      <div className="text-center">
+                        <span className="text-xs sm:text-sm font-medium text-gray-700 group-hover:text-gray-900">
+                          {file ? 'Cambiar archivo' : 'Haz clic para seleccionar'}
+                        </span>
+                        <span className="text-[10px] text-gray-500 block mt-0.5">PDF únicamente</span>
+                      </div>
+                    </div>
+                    <input 
+                      type="file" 
+                      accept="application/pdf" 
+                      onChange={e => setFile(e.target.files?.[0] || null)} 
+                      className="hidden" 
+                    />
+                  </label>
+                </div>
+                {file && (
+                  <div className="mt-2 flex items-center gap-2 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-lg">
+                    <svg className="w-4 h-4 text-emerald-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-medium text-emerald-900 truncate">{file.name}</div>
+                      <div className="text-[10px] text-emerald-700">{(file.size / 1024).toFixed(1)} KB</div>
+                    </div>
+                    <button
+                      onClick={() => setFile(null)}
+                      className="text-emerald-600 hover:text-emerald-800 transition-colors flex-shrink-0"
+                      type="button"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Botón de acción */}
+            <div className="pt-4 border-t border-gray-200">
+              <button 
+                onClick={handleAddOrder} 
+                disabled={!file} 
+                className="w-full sm:w-auto sm:min-w-[160px] px-6 py-3 rounded-lg bg-black hover:bg-gray-800 active:bg-gray-900 text-white text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-black flex items-center justify-center gap-2 shadow-sm hover:shadow-md disabled:shadow-none"
+              >
+                {file ? (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    <span>Crear orden</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                    </svg>
+                    <span>Selecciona un PDF primero</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
       
 
       {/* Orders table */}
-      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-        <div className="hidden md:grid grid-cols-12 gap-2 text-[11px] text-gray-600 bg-gray-50 border-b px-3 py-2">
-          <div className="col-span-3">Orden</div>
-          <div className="col-span-2">Cotización</div>
-          <div className="col-span-2">Vendedor</div>
-          <div className="col-span-1">Fecha</div>
-          <div className="col-span-2">Estado</div>
-          <div className="col-span-2 text-right">Acciones</div>
+      <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+        {/* Table Header */}
+        <div className="hidden md:grid grid-cols-12 gap-4 text-xs font-semibold text-gray-700 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200 px-4 sm:px-6 py-3 items-center">
+          <div className="col-span-2 flex items-center">Orden</div>
+          <div className="col-span-4 flex items-center">Progreso</div>
+          <div className="col-span-1 flex items-center">Vendedor</div>
+          <div className="col-span-1 flex items-center">Fecha</div>
+          <div className="col-span-2 flex items-center">Estado</div>
+          <div className="col-span-2 flex items-center justify-end">Acciones</div>
         </div>
+        
         {orders.length === 0 && (
-          <div className="p-6 text-center text-xs sm:text-sm text-gray-500">No hay órdenes aún. Sube un PDF para crear una.</div>
+          <div className="p-8 sm:p-12 text-center">
+            <svg className="w-12 h-12 mx-auto text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <p className="text-sm text-gray-500">No hay órdenes aún</p>
+            <p className="text-xs text-gray-400 mt-1">Sube un PDF para crear una orden de producción</p>
+          </div>
         )}
-        <div className="divide-y">
+        
+        <div className="divide-y divide-gray-100">
           {orders.map(order => (
-            <div key={order.id} className="grid md:grid-cols-12 gap-2 px-3 py-3 items-center">
-              <div className="md:col-span-3">
-                <div className="text-sm font-medium text-gray-900 truncate">{order.title}</div>
-                <a href={order.pdfUrl} target="_blank" rel="noreferrer" className="text-[11px] text-blue-600 hover:underline truncate">{order.pdfName}</a>
-                <div className="mt-2">
-                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+            <div key={order.id} className="grid md:grid-cols-12 gap-4 px-4 sm:px-6 py-4 hover:bg-gray-50 transition-colors items-center">
+              {/* Orden */}
+              <div className="md:col-span-2 flex items-center">
+                <div className="flex items-center gap-2">
+                  <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <span className="text-sm font-semibold text-gray-900 truncate">{order.title}</span>
+                </div>
+              </div>
+              
+              {/* Progreso */}
+              <div className="md:col-span-4 flex items-center">
+                <div className="space-y-1 w-full">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-medium text-gray-600">Progreso</span>
+                    <span className="text-xs font-bold text-gray-900">{getStatusProgress(order.status)}%</span>
+                  </div>
+                  <div className="h-1 bg-gray-200 rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-emerald-500"
+                      className="h-full bg-gradient-to-r from-emerald-500 to-emerald-600 rounded-full transition-all duration-300"
                       style={{ width: `${getStatusProgress(order.status)}%` }}
                     ></div>
                   </div>
-                  <div className="mt-1 text-[10px] text-gray-600">Progreso: {getStatusProgress(order.status)}%</div>
                 </div>
               </div>
-              <div className="md:col-span-2 text-[12px] text-gray-700">{order.quoteNumber || '—'}</div>
-              <div className="md:col-span-2 text-[12px] text-gray-700">{order.vendorName || '—'}</div>
-              <div className="md:col-span-1 text-[12px] text-gray-700">{new Date(order.createdAt).toLocaleDateString()}</div>
-              <div className="md:col-span-2">
-                <select value={order.status} onChange={e => updateStatus(order.id, e.target.value as ProductionStatus)} className="w-full border rounded px-2 py-1 text-xs bg-white text-black focus:bg-white focus:text-black focus-visible:outline focus-visible:outline-1 focus-visible:outline-black">
-                  {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
+              
+              {/* Vendedor */}
+              <div className="md:col-span-1 flex items-center">
+                <div className="flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                  </svg>
+                  <span className="text-xs sm:text-sm text-gray-700 truncate">{order.vendorName || <span className="text-gray-400">—</span>}</span>
+                </div>
               </div>
-              <div className="md:col-span-2 flex md:justify-end gap-2">
-                <a href={order.pdfUrl} target="_blank" rel="noreferrer" className="border rounded px-2 py-1 text-[11px] text-black visited:text-black hover:text-black hover:bg-gray-50">Ver</a>
-                <button onClick={() => removeOrder(order.id)} className="text-red-600 text-[11px]">Eliminar</button>
+              
+              {/* Fecha */}
+              <div className="md:col-span-1 flex items-center">
+                <div className="flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  <span className="text-xs text-gray-700 whitespace-nowrap">{new Date(order.createdAt).toLocaleDateString('es-ES', { day: 'numeric', month: 'numeric', year: 'numeric' })}</span>
+                </div>
+              </div>
+              
+              {/* Estado */}
+              <div className="md:col-span-2 flex items-center">
+                <div className="relative w-full">
+                  <select 
+                    value={order.status} 
+                    onChange={e => updateStatus(order.id, e.target.value as ProductionStatus)} 
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs sm:text-sm bg-white text-gray-900 font-medium focus:outline-none focus:ring-2 focus:ring-black focus:border-black transition-all appearance-none pr-8 hover:border-gray-400"
+                  >
+                    {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <div className="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Acciones */}
+              <div className="md:col-span-2 flex md:justify-end items-center gap-1.5">
+                <a 
+                  href={order.pdfUrl} 
+                  target="_blank" 
+                  rel="noreferrer" 
+                  className="inline-flex items-center justify-center border border-gray-300 rounded-lg p-1.5 text-gray-700 bg-white hover:bg-gray-50 hover:border-gray-400 transition-all"
+                  title="Ver PDF"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                </a>
+                <button 
+                  onClick={() => {
+                    if (confirm('¿Estás seguro de que deseas eliminar esta orden?')) {
+                      removeOrder(order.id)
+                    }
+                  }}
+                  className="inline-flex items-center justify-center p-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-all"
+                  title="Eliminar orden"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
               </div>
             </div>
           ))}

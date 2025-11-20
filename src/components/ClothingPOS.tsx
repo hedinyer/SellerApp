@@ -12,7 +12,9 @@ import {
   UserIcon,
   XIcon,
   HistoryIcon,
-  SaveIcon
+  SaveIcon,
+  EditIcon,
+  PartyPopperIcon
 } from './icons'
 
 type InventoryStatus = 'activo' | 'inactivo'
@@ -37,6 +39,11 @@ interface GarmentItem {
   variants?: VariantStock[]
 }
 
+interface CartModification {
+  name: string
+  price: number
+}
+
 interface CartLine {
   id: string
   itemId: string
@@ -46,6 +53,8 @@ interface CartLine {
   unitPrice: number
   quantity: number
   imageUrl?: string
+  discount?: number // Descuento individual por prenda
+  modifications?: CartModification[] // Modificaciones con precio
 }
 
 type PaymentMethod = 'cash' | 'card' | 'transfer' | 'voucher' | 'store-credit'
@@ -61,6 +70,7 @@ interface CustomerRef {
   phone?: string
   email?: string
   cedula?: string
+  address?: string
 }
 
 interface SaleRecord {
@@ -118,6 +128,32 @@ function saveSales(sales: SaleRecord[]) {
 
 export function ClothingPOS() {
   const { getFontSizeClass } = useConfig()
+
+  // Función para formatear números igual que PaymentHistory
+  const formatNumber = (value: number | string) => {
+    const num = Number(value)
+    if (Number.isNaN(num)) return String(value)
+    const raw = String(value)
+    const hasDecimals = raw.includes('.')
+    const decimals = hasDecimals ? Math.min(20, (raw.split('.')[1] || '').length) : 0
+    return new Intl.NumberFormat('es-ES', {
+      useGrouping: true,
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals
+    }).format(num)
+  }
+
+  // Función para obtener el nombre del método de pago
+  const getPaymentMethodName = (method: string) => {
+    const methodMap: Record<string, string> = {
+      'cash': 'Efectivo',
+      'card': 'Tarjeta',
+      'transfer': 'Transferencia',
+      'voucher': 'Vale',
+      'store-credit': 'Crédito de tienda'
+    }
+    return methodMap[method.toLowerCase()] || method
+  }
   const inputRef = useRef<HTMLInputElement>(null)
 
   
@@ -138,6 +174,7 @@ export function ClothingPOS() {
   const [variantPicker, setVariantPicker] = useState<{ item: GarmentItem } | null>(null)
   const [selectedVariant, setSelectedVariant] = useState<{ color: string; size: string } | null>(null)
   const [isProcessingSale, setIsProcessingSale] = useState(false)
+  const [editingLine, setEditingLine] = useState<CartLine | null>(null)
 
   const [showCheckout, setShowCheckout] = useState(false)
   const [customer, setCustomer] = useState<CustomerRef>({})
@@ -357,10 +394,20 @@ export function ClothingPOS() {
     })
   }, [inventory, query, filterCategory, onlyInStock, onlyPromotions])
 
-  const subtotal = useMemo(() => cart.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0), [cart])
-  const pct = Math.max(0, Math.min(100, Number(discountPct) || 0))
-  const discountTotal = Math.min(subtotal, Math.round((subtotal * (pct / 100)) * 100) / 100)
-  const totalToPay = Math.max(0, subtotal - discountTotal)
+  // Calcular subtotal incluyendo modificaciones y descuentos individuales (en %)
+  const subtotal = useMemo(() => {
+    return cart.reduce((sum, l) => {
+      const modificationsTotal = (l.modifications || []).reduce((modSum, mod) => modSum + mod.price, 0)
+      const priceWithModifications = l.unitPrice + modificationsTotal
+      const discountPercent = Math.max(0, Math.min(100, l.discount || 0))
+      const discountAmount = (priceWithModifications * discountPercent / 100)
+      const finalPricePerUnit = priceWithModifications - discountAmount
+      return sum + (finalPricePerUnit * l.quantity)
+    }, 0)
+  }, [cart])
+  // Descuento global removido - los descuentos individuales ya están incluidos en el subtotal
+  const discountTotal = 0
+  const totalToPay = subtotal
 
   function addToCartFromItem(item: GarmentItem) {
     // Always show variant picker if there are variants (which there should be after grouping by name)
@@ -484,6 +531,10 @@ export function ClothingPOS() {
 
   function removeLine(lineId: string) {
     setCart(prev => prev.filter(l => l.id !== lineId))
+  }
+
+  function updateLine(lineId: string, updates: Partial<CartLine>) {
+    setCart(prev => prev.map(l => l.id === lineId ? { ...l, ...updates } : l))
   }
 
   function clearCart() {
@@ -1032,76 +1083,52 @@ export function ClothingPOS() {
     try {
       const w = window.open('', '_blank')
       if (!w) return
-      
-      const itemsHtml = sale.items.map(l => `
-        <tr style="border-bottom: 1px solid #f3f4f6;">
-          <td style="padding: 6px 0; font-size: 10px; color: #111827;">
-            <div style="font-weight: 500; margin-bottom: 1px;">${l.name}</div>
-            ${l.variantLabel ? `<div style="font-size: 9px; color: #6b7280; margin-bottom: 1px;">${l.variantLabel}</div>` : ''}
-            <div style="font-size: 8px; color: #9ca3af;">SKU: ${l.sku}</div>
-          </td>
-          <td style="padding: 6px 4px; text-align: center; font-size: 10px; color: #111827; font-weight: 500;">
-            x${l.quantity}
-          </td>
-          <td style="padding: 6px 0; text-align: right; font-size: 10px; color: #111827; font-weight: 600;">
-            ${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(l.unitPrice * l.quantity)}
-          </td>
-        </tr>
+
+      const itemsHtml = sale.items.map(item => `
+        <div class="item-row">
+            <div class="item-image">
+                 ${item.imageUrl ? `<img src="${item.imageUrl}" alt="img" />` : '<div class="no-img">IMG</div>'}
+            </div>
+            <div class="item-details">
+                <div class="item-name">${item.name}</div>
+                ${item.variantLabel ? `<div class="item-variant">${item.variantLabel}</div>` : ''}
+            </div>
+            <div class="item-totals">
+                <div class="item-qty">x${item.quantity}</div>
+                <div class="item-price">${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(item.unitPrice * item.quantity)}</div>
+            </div>
+        </div>
       `).join('')
-      
-      const paymentsHtml = sale.payments.map((p, i) => {
-        const methodNames: Record<string, string> = {
-          'cash': 'Efectivo',
-          'card': 'Tarjeta',
-          'transfer': 'Transferencia',
-          'voucher': 'Vale',
-          'store-credit': 'Crédito interno'
-        }
-        return `
-          <div style="display: flex; justify-content: space-between; padding: 3px 0; font-size: 10px;">
-            <span style="color: #6b7280; text-transform: capitalize;">${methodNames[p.method] || p.method}:</span>
-            <span style="font-weight: 600; color: #111827;">${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(p.amount)}</span>
-          </div>
-        `
-      }).join('')
-      
-      const customerInfo = sale.customer ? `
-        <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb;">
-          <div style="font-size: 9px; color: #6b7280; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.3px;">Información del Cliente</div>
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; font-size: 10px; color: #111827;">
-            <div>
-              <span style="color: #6b7280; font-weight: 500;">Nombre:</span>
-              <span style="font-weight: 500; margin-left: 4px;">${sale.customer.name || '—'}</span>
-            </div>
-            ${sale.customer.phone ? `
-            <div>
-              <span style="color: #6b7280; font-weight: 500;">Teléfono:</span>
-              <span style="font-weight: 500; margin-left: 4px;">${sale.customer.phone}</span>
-            </div>
-            ` : '<div></div>'}
-            ${sale.customer.cedula ? `
-            <div>
-              <span style="color: #6b7280; font-weight: 500;">Cédula:</span>
-              <span style="font-weight: 500; margin-left: 4px;">${sale.customer.cedula}</span>
-            </div>
-            ` : ''}
-            ${sale.customer.email ? `
-            <div>
-              <span style="color: #6b7280; font-weight: 500;">Email:</span>
-              <span style="font-weight: 500; margin-left: 4px;">${sale.customer.email}</span>
-            </div>
-            ` : ''}
-          </div>
+
+      const customerHtml = sale.customer ? `
+        <div class="customer-box">
+            <div class="customer-name">${sale.customer.name || 'Cliente General'}</div>
+            ${sale.customer.phone ? `<div class="customer-row"><span class="label">Tel:</span><span class="value">${sale.customer.phone}</span></div>` : ''}
+            ${sale.customer.email ? `<div class="customer-row"><span class="label">Email:</span><span class="value">${sale.customer.email}</span></div>` : ''}
+            ${sale.customer.cedula ? `<div class="customer-row"><span class="label">Cédula:</span><span class="value">${sale.customer.cedula}</span></div>` : ''}
+            ${sale.customer.address ? `<div class="customer-row"><span class="label">Dirección:</span><span class="value">${sale.customer.address}</span></div>` : ''}
         </div>
       ` : ''
-      
+
+      const barcodeHtml = `
+        <div class="barcode-container">
+           <div class="barcode-lines">
+              ${Array.from({ length: 45 }).map(() => `<div class="bar" style="width: ${Math.random() > 0.6 ? '3px' : '1px'}"></div>`).join('')}
+           </div>
+           <div class="barcode-text">
+              <span>${sale.id.slice(0, 4)}</span>
+              <span>${sale.id.slice(-4)}</span>
+           </div>
+        </div>
+      `
+
       w.document.write(`
         <!DOCTYPE html>
         <html>
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Factura de venta - ${sale.id}</title>
+          <title>Ticket - ${sale.id}</title>
           <style>
             @font-face {
               font-family: 'Helvetica Neue';
@@ -1110,160 +1137,116 @@ export function ClothingPOS() {
               font-style: normal;
               font-display: swap;
             }
-            * {
-              margin: 0;
-              padding: 0;
-              box-sizing: border-box;
-            }
+            * { margin: 0; padding: 0; box-sizing: border-box; }
             body {
               font-family: 'Helvetica Neue', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-              background: #ffffff;
+              background: #f3f4f6;
               color: #111827;
+              font-size: 12px;
               line-height: 1.4;
+              min-height: 100vh;
+              display: flex;
+              justify-content: center;
+              align-items: flex-start;
+              padding: 20px;
             }
             .container {
-              max-width: 600px;
-              margin: 0 auto;
-              padding: 20px;
-              background: white;
-            }
-            .header {
-              display: flex;
-              align-items: center;
-              margin-bottom: 16px;
-              padding-bottom: 12px;
-              border-bottom: 1px solid #e5e7eb;
-            }
-            .logo {
-              width: 50px;
-              height: 50px;
-              object-fit: contain;
-              margin-right: 12px;
-            }
-            .header-text {
-              flex: 1;
-            }
-            .header-title {
-              font-size: 18px;
-              font-weight: 700;
-              color: #111827;
-              margin-bottom: 2px;
-              letter-spacing: -0.3px;
-            }
-            .header-subtitle {
-              font-size: 10px;
-              color: #6b7280;
-              font-weight: 500;
-            }
-            .info-section {
-              margin-bottom: 12px;
-            }
-            .info-row {
-              display: flex;
-              justify-content: space-between;
-              padding: 4px 0;
-              font-size: 10px;
-            }
-            .info-label {
-              color: #6b7280;
-              font-weight: 500;
-            }
-            .info-value {
-              color: #111827;
-              font-weight: 600;
-            }
-            .items-table {
               width: 100%;
-              border-collapse: collapse;
-              margin: 12px 0;
+              max-width: 380px;
+              margin: 0 auto;
+              padding: 24px;
+              background: white;
+              border-radius: 24px;
+              border: 1px solid #e5e7eb;
+              box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
             }
-            .items-table thead {
+            .header { text-align: center; margin-bottom: 20px; }
+            .logo { height: 64px; object-fit: contain; margin-bottom: 16px; max-width: 100%; }
+            .ticket-label { font-size: 10px; color: #9ca3af; text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; margin-bottom: 4px; }
+            .ticket-value { font-size: 14px; font-weight: 700; color: #111827; font-family: monospace; margin-bottom: 12px; }
+            .date-row { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; font-weight: 500; color: #374151; }
+            .dot { width: 4px; height: 4px; background: #d1d5db; border-radius: 50%; }
+            
+            .dashed-line {
+              border-top: 2px dashed #e5e7eb;
+              margin: 16px 0;
+              position: relative;
+            }
+            .dashed-line::before,
+            .dashed-line::after {
+              content: '';
+              position: absolute;
+              top: 50%;
+              transform: translateY(-50%);
+              width: 24px;
+              height: 24px;
+              background: #f3f4f6;
+              border-radius: 50%;
+            }
+            .dashed-line::before { left: -36px; }
+            .dashed-line::after { right: -36px; }
+            
+            /* Customer Box */
+            .customer-box {
               background: #f9fafb;
-              border-bottom: 1px solid #e5e7eb;
+              border: 1px solid #f3f4f6;
+              border-radius: 12px;
+              padding: 16px;
+              margin-bottom: 24px;
             }
-            .items-table th {
-              padding: 6px 0;
-              text-align: left;
-              font-size: 9px;
-              font-weight: 600;
-              color: #6b7280;
-              text-transform: uppercase;
-              letter-spacing: 0.3px;
-            }
-            .items-table th:last-child {
-              text-align: right;
-            }
-            .items-table th:nth-child(2) {
-              text-align: center;
-            }
-            .items-table td {
-              padding: 6px 0;
-              font-size: 10px;
-            }
-            .totals {
-              margin-top: 12px;
-              padding-top: 12px;
-              border-top: 1px solid #e5e7eb;
-            }
-            .total-row {
-              display: flex;
-              justify-content: space-between;
-              padding: 4px 0;
-              font-size: 11px;
-            }
-            .total-row.final {
-              margin-top: 8px;
-              padding-top: 8px;
-              border-top: 1px solid #e5e7eb;
-              font-size: 14px;
-              font-weight: 700;
-              color: #111827;
-            }
-            .total-label {
-              color: #6b7280;
-              font-weight: 500;
-            }
-            .total-value {
-              color: #111827;
-              font-weight: 600;
-            }
-            .total-row.final .total-label,
-            .total-row.final .total-value {
-              color: #111827;
-              font-weight: 700;
-            }
-            .payments-section {
-              margin-top: 12px;
-              padding-top: 12px;
-              border-top: 1px solid #e5e7eb;
-            }
-            .payments-title {
-              font-size: 10px;
-              color: #6b7280;
-              font-weight: 600;
-              margin-bottom: 8px;
-              text-transform: uppercase;
-              letter-spacing: 0.3px;
-            }
-            .footer {
-              margin-top: 16px;
-              padding-top: 12px;
-              border-top: 1px dashed #d1d5db;
-              text-align: center;
-              font-size: 9px;
-              color: #9ca3af;
-            }
+            .customer-name { font-weight: 700; font-size: 14px; margin-bottom: 8px; }
+            .customer-row { display: flex; gap: 8px; margin-bottom: 4px; font-size: 12px; }
+            .customer-row .label { color: #9ca3af; min-width: 40px; }
+            .customer-row .value { color: #4b5563; word-break: break-word; }
+            
+            /* Items */
+            .section-title { font-size: 10px; text-transform: uppercase; color: #9ca3af; font-weight: 600; margin-bottom: 8px; }
+            .items-list { margin-bottom: 20px; border-top: 1px solid #f3f4f6; padding-top: 16px; }
+            .item-row { display: flex; gap: 12px; margin-bottom: 12px; align-items: center; }
+            .item-image { width: 48px; height: 48px; border-radius: 8px; background: #f3f4f6; overflow: hidden; flex-shrink: 0; border: 1px solid #e5e7eb; }
+            .item-image img { width: 100%; height: 100%; object-fit: cover; }
+            .item-image .no-img { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 8px; }
+            .item-details { flex: 1; min-width: 0; }
+            .item-name { font-weight: 500; font-size: 12px; color: #111827; }
+            .item-variant { font-size: 10px; color: #6b7280; }
+            .item-totals { text-align: right; }
+            .item-qty { font-family: monospace; font-size: 12px; color: #111827; }
+            .item-price { font-size: 10px; color: #6b7280; }
+            
+            /* Totals */
+            .totals-section { border-top: 1px solid #f3f4f6; padding-top: 16px; margin-bottom: 24px; }
+            .total-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 12px; }
+            .total-row.final { font-weight: 700; font-size: 14px; border-top: 1px solid #f3f4f6; padding-top: 12px; margin-top: 12px; }
+            
+            /* Barcode */
+            .barcode-container { text-align: center; margin-top: 24px; }
+            .barcode-lines { height: 48px; display: flex; justify-content: center; gap: 3px; overflow: hidden; opacity: 0.8; margin-bottom: 4px; }
+            .barcode-lines .bar { background: black; }
+            .barcode-text { display: flex; justify-content: space-between; padding: 0 16px; font-family: monospace; font-size: 10px; color: #9ca3af; letter-spacing: 2px; }
+            
             @media print {
               body {
-                margin: 0;
+                background-color: white;
                 padding: 0;
+                display: block;
               }
               .container {
-                padding: 16px;
-                max-width: 100%;
+                width: 100%;
+                max-width: 380px;
+                margin: 0 auto;
+                border: 1px solid #e5e7eb;
+                border-radius: 24px;
+                padding: 20px;
+                box-shadow: none;
               }
-              @page {
-                margin: 0.8cm;
+              /* Adjust cutouts for print background */
+              .dashed-line::before,
+              .dashed-line::after {
+                background: white;
+              }
+              @page { 
+                margin: 1cm;
+                size: auto; 
               }
             }
           </style>
@@ -1271,98 +1254,79 @@ export function ClothingPOS() {
         <body>
           <div class="container">
             <div class="header">
-              ${logoBase64 ? `<img src="${logoBase64}" alt="Dwell Logo" class="logo" />` : ''}
-              <div class="header-text">
-                <div class="header-title">Ticket de Venta</div>
-                <div class="header-subtitle">Factura #${sale.id}</div>
-              </div>
-            </div>
-            
-            <div class="info-section">
-              <div class="info-row">
-                <span class="info-label">Fecha y Hora:</span>
-                <span class="info-value">${new Date(sale.at).toLocaleString('es-CO', { dateStyle: 'long', timeStyle: 'short' })}</span>
+              ${logoBase64 ? `<img src="${logoBase64}" alt="Logo" class="logo" />` : ''}
+              <div class="ticket-label">TICKET ID</div>
+              <div class="ticket-value">${sale.id}</div>
+              <div class="ticket-label" style="margin-top: 16px;">DATE & TIME</div>
+              <div class="date-row">
+                <span>${new Date(sale.at).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }).replace('.', '')}</span>
+                <span class="dot"></span>
+                <span>${new Date(sale.at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}</span>
               </div>
               ${sale.seller ? `
-              <div class="info-row">
-                <span class="info-label">Vendedor:</span>
-                <span class="info-value">${sale.seller}</span>
-              </div>
+                 <div class="ticket-label" style="margin-top: 12px;">Vendedor</div>
+                 <div style="font-weight:500;">${sale.seller}</div>
               ` : ''}
             </div>
-            
-            <table class="items-table">
-              <thead>
-                <tr>
-                  <th>Producto</th>
-                  <th>Cantidad</th>
-                  <th>Total</th>
-                </tr>
-              </thead>
-              <tbody>
+
+            <div class="dashed-line"></div>
+
+            ${customerHtml}
+
+            <div class="section-title">Products</div>
+            <div class="items-list">
                 ${itemsHtml}
-              </tbody>
-            </table>
-            
-            <div class="totals">
-              <div class="total-row">
-                <span class="total-label">Subtotal:</span>
-                <span class="total-value">${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(sale.subtotal)}</span>
-              </div>
-              ${sale.discount > 0 ? `
-              <div class="total-row">
-                <span class="total-label">Descuento:</span>
-                <span class="total-value" style="color: #dc2626;">-${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(sale.discount)}</span>
-              </div>
-              ` : ''}
-              <div class="total-row final">
-                <span class="total-label">Total a Pagar:</span>
-                <span class="total-value">${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(sale.total)}</span>
-              </div>
             </div>
-            
-            ${sale.payments.length > 0 ? `
-            <div class="payments-section">
-              <div class="payments-title">Métodos de Pago</div>
-              ${paymentsHtml}
+
+            <div class="totals-section">
+               <div class="total-row">
+                   <span style="color: #6b7280;">Subtotal</span>
+                   <span style="font-weight: 500;">${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(sale.subtotal)}</span>
+               </div>
+               ${sale.discount > 0 ? `
+               <div class="total-row">
+                   <span style="color: #6b7280;">Descuento</span>
+                   <span style="font-weight: 500; color: #dc2626;">-${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(sale.discount)}</span>
+               </div>
+               ` : ''}
+               <div class="total-row final">
+                   <span>Total</span>
+                   <span>${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(sale.total)}</span>
+               </div>
             </div>
-            ` : ''}
+
+            ${barcodeHtml}
             
-            ${customerInfo}
-            
-            <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid #e5e7eb;">
-              <div style="text-align: center; margin-bottom: 8px;">
-                <h3 style="font-size: 12px; font-weight: 700; color: #111827; margin-bottom: 4px; letter-spacing: 0.5px;">DWELL ROPA DEPORTIVA</h3>
-                <p style="font-size: 9px; color: #4b5563; line-height: 1.4; margin-bottom: 6px;">
+            <div style="text-align: center; margin-top: 24px; padding-top: 20px; border-top: 1px dashed #d1d5db;">
+               <h3 style="font-size: 12px; font-weight: 700; color: #111827; margin-bottom: 8px; letter-spacing: 0.5px;">DWELL ROPA DEPORTIVA</h3>
+               <p style="font-size: 9px; color: #4b5563; line-height: 1.4; margin-bottom: 8px; max-width: 320px; margin-left: auto; margin-right: auto;">
                   Somos una empresa Santandereana especializada en ropa deportiva premium y de alto rendimiento, fabricada con las mejores textiles del mercado y con la mejor calidad garantizada.
-                </p>
-                <div style="margin-top: 6px; font-size: 8px; color: #9ca3af;">
-                  <a href="https://dwell.com.co/" style="color: #6b7280; text-decoration: none;">www.dwell.com.co</a>
-                </div>
-              </div>
-            </div>
-            
-            <div class="footer">
-              <div style="font-size: 9px;">Gracias por su compra</div>
-              <div style="margin-top: 2px; font-size: 8px;">Este documento es válido como comprobante de pago</div>
-              <div style="margin-top: 2px; font-size: 8px; color: #6b7280;">
-                Cambios solo por talla, no devolución de dinero. Garantía de dos meses por prenda.
-              </div>
+               </p>
+               <div style="margin-bottom: 12px; font-size: 8px; color: #6b7280;">
+                  <a href="https://dwellcol.com" style="color: #6b7280; text-decoration: none;">dwellcol.com</a>
+               </div>
+               <div style="font-size: 9px; color: #9ca3af; margin-top: 12px;">
+                  <p style="margin-bottom: 4px;">Gracias por su compra</p>
+                  <p style="margin-bottom: 4px;">Este documento es válido como comprobante de pago</p>
+                  <p style="margin-top: 4px; font-size: 8px; color: #6b7280;">Cambios solo por talla, no devolución de dinero. Garantía de dos meses por prenda</p>
+               </div>
             </div>
           </div>
           <script>
             window.onload = function() {
               setTimeout(function() {
                 window.print();
-                window.close();
-              }, 300);
+                // window.close(); // Optional: close after print
+              }, 500);
             }
           </script>
         </body>
         </html>
       `)
       w.document.close()
-    } catch {}
+    } catch (error) {
+      console.error('Error printing invoice:', error)
+    }
   }
 
   return (
@@ -1439,63 +1403,48 @@ export function ClothingPOS() {
                 <div className="text-black text-xs sm:text-sm text-center py-4">No hay productos en el carrito</div>
               )}
               <div className="space-y-1.5 sm:space-y-2">
-                {cart.map(line => (
-                  <div key={line.id} className="flex items-center gap-1.5 sm:gap-2 border rounded p-1.5 sm:p-2">
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-gray-100 flex items-center justify-center flex-shrink-0 rounded overflow-hidden">
-                      {line.imageUrl ? <img src={line.imageUrl} className="w-full h-full object-cover"/> : <span className="text-[8px] sm:text-xs">IMG</span>}
+                {cart.map(line => {
+                  const modificationsTotal = (line.modifications || []).reduce((sum, mod) => sum + mod.price, 0)
+                  const priceWithModifications = line.unitPrice + modificationsTotal
+                  const discountPercent = Math.max(0, Math.min(100, line.discount || 0))
+                  const discountAmount = (priceWithModifications * discountPercent / 100)
+                  const finalPricePerUnit = priceWithModifications - discountAmount
+                  const lineTotal = finalPricePerUnit * line.quantity
+                  return (
+                    <div key={line.id} className="border rounded p-1.5 sm:p-2">
+                      <div className="flex items-center gap-1.5 sm:gap-2">
+                        <div className="w-10 h-10 sm:w-12 sm:h-12 bg-gray-100 flex items-center justify-center flex-shrink-0 rounded overflow-hidden">
+                          {line.imageUrl ? <img src={line.imageUrl} className="w-full h-full object-cover"/> : <span className="text-[8px] sm:text-xs">IMG</span>}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="truncate font-medium text-xs sm:text-sm">{line.name}</div>
+                          <div className="text-[10px] sm:text-xs text-black truncate">{line.variantLabel || line.sku}</div>
+                          {(line.discount && line.discount > 0) || (line.modifications && line.modifications.length > 0) ? (
+                            <div className="mt-0.5 space-y-0.5">
+                              {line.discount && line.discount > 0 && (
+                                <div className="text-[9px] text-red-600">Descuento: {discountPercent % 1 === 0 ? discountPercent : discountPercent.toFixed(2)}% (-{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(discountAmount)})</div>
+                              )}
+                              {line.modifications && line.modifications.length > 0 && (
+                                <div className="text-[9px] text-blue-600">
+                                  Modificaciones: {line.modifications.map(m => `${m.name} (+${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(m.price)})`).join(', ')}
+                                </div>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="text-[10px] sm:text-xs w-16 sm:w-20 text-right flex-shrink-0">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(line.unitPrice)}</div>
+                        <div className="flex items-center gap-0.5 sm:gap-1 flex-shrink-0">
+                          <button className="border rounded p-0.5 sm:p-1" onClick={() => changeQty(line.id, -1)}><MinusIcon size={12} className="sm:w-3.5 sm:h-3.5" /></button>
+                          <div className="w-6 sm:w-8 text-center text-xs sm:text-sm">{line.quantity}</div>
+                          <button className="border rounded p-0.5 sm:p-1" onClick={() => changeQty(line.id, 1)}><PlusIcon size={12} className="sm:w-3.5 sm:h-3.5" /></button>
+                        </div>
+                        <div className="text-[10px] sm:text-xs w-16 sm:w-20 text-right font-semibold flex-shrink-0">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(lineTotal)}</div>
+                        <button className="text-blue-600 flex-shrink-0" onClick={() => setEditingLine(line)} title="Editar descuento y modificaciones"><EditIcon size={14} className="sm:w-4 sm:h-4" /></button>
+                        <button className="text-red-600 flex-shrink-0" onClick={() => removeLine(line.id)}><XIcon size={14} className="sm:w-4 sm:h-4" /></button>
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="truncate font-medium text-xs sm:text-sm">{line.name}</div>
-                      <div className="text-[10px] sm:text-xs text-black truncate">{line.variantLabel || line.sku}</div>
-                    </div>
-                    <div className="text-[10px] sm:text-xs w-16 sm:w-20 text-right flex-shrink-0">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(line.unitPrice)}</div>
-                    <div className="flex items-center gap-0.5 sm:gap-1 flex-shrink-0">
-                      <button className="border rounded p-0.5 sm:p-1" onClick={() => changeQty(line.id, -1)}><MinusIcon size={12} className="sm:w-3.5 sm:h-3.5" /></button>
-                      <div className="w-6 sm:w-8 text-center text-xs sm:text-sm">{line.quantity}</div>
-                      <button className="border rounded p-0.5 sm:p-1" onClick={() => changeQty(line.id, 1)}><PlusIcon size={12} className="sm:w-3.5 sm:h-3.5" /></button>
-                    </div>
-                    <div className="text-[10px] sm:text-xs w-16 sm:w-20 text-right font-semibold flex-shrink-0">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(line.unitPrice * line.quantity)}</div>
-                    <button className="text-red-600 flex-shrink-0" onClick={() => removeLine(line.id)}><XIcon size={14} className="sm:w-4 sm:h-4" /></button>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Discounts */}
-            <div className="mt-2 sm:mt-3 space-y-1.5 sm:space-y-2">
-              <div>
-                <label className="text-[10px] sm:text-xs text-black">Descuento %</label>
-                <div className="flex gap-1">
-                  <input 
-                    type="text" 
-                    inputMode="decimal"
-                    value={String(discountPct)} 
-                    onChange={e => {
-                      const raw = e.target.value.replace(/,/g, '.').replace(/[^0-9.]/g, '')
-                      const num = Number(raw)
-                      if (isNaN(num)) setDiscountPct(0)
-                      else setDiscountPct(Math.max(0, Math.min(100, num)))
-                    }} 
-                    placeholder="0"
-                    className="flex-1 border rounded px-1.5 sm:px-2 py-1 text-xs sm:text-sm bg-white text-black" 
-                    onKeyPress={e => {
-                      if (e.key === 'Enter') {
-                        // Descuento se aplica automáticamente al cambiar el valor
-                      }
-                    }}
-                  />
-                  <button 
-                    className="border rounded px-1.5 sm:px-2 py-1 text-xs sm:text-sm bg-white text-black hover:bg-gray-50 whitespace-nowrap" 
-                    onClick={() => {
-                      // El descuento ya se aplica automáticamente, pero podemos resetearlo
-                      if (discountPct > 0) {
-                        setDiscountPct(0)
-                      }
-                    }}
-                  >
-                    {discountPct > 0 ? 'Limpiar' : 'Aplicar'}
-                  </button>
-                </div>
+                  )
+                })}
               </div>
             </div>
 
@@ -1517,11 +1466,9 @@ export function ClothingPOS() {
             {/* Totals */}
             <div className="mt-2 sm:mt-4 border-t pt-2 sm:pt-3">
               <div className="flex justify-between text-xs sm:text-sm text-black"><span>Productos</span><span>{cart.reduce((a, l) => a + l.quantity, 0)}</span></div>
-              <div className="flex justify-between text-xs sm:text-sm text-black"><span>Subtotal</span><span>{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(subtotal)}</span></div>
-              <div className="flex justify-between text-xs sm:text-sm text-black"><span>Descuentos</span><span>-{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(discountTotal)}</span></div>
               <div className="flex justify-between items-center mt-1.5 sm:mt-2">
                 <span className="text-sm sm:text-base font-semibold">Total</span>
-                <span className="text-lg sm:text-xl md:text-2xl font-bold">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(totalToPay)}</span>
+                <span className="text-lg sm:text-xl md:text-2xl font-bold">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(subtotal)}</span>
               </div>
               <button disabled={cart.length === 0} onClick={openCheckout} className={`w-full mt-2 sm:mt-3 py-2 rounded border border-black text-black flex items-center justify-center gap-2 text-xs sm:text-sm ${cart.length === 0 ? 'bg-gray-300' : 'bg-gray-200 hover:bg-gray-300'}`}>
                 <DollarSignIcon size={16} className="sm:w-[18px] sm:h-[18px]" /> Cobrar
@@ -1658,86 +1605,300 @@ export function ClothingPOS() {
         </div>
       )}
 
-      {/* Checkout modal */}
-      {showCheckout && (
+      {/* Edit line modal */}
+      {editingLine && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[95vh] overflow-hidden flex flex-col">
-            {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-white">
-              <div className="flex-1"></div>
-              <div className="flex-1 text-center">
-                <h2 className="text-lg font-semibold text-gray-900">Finalizar Venta</h2>
-                <p className="text-xs text-gray-500">Complete la información del cliente y el pago</p>
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-3 sm:p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="font-semibold text-sm sm:text-base">Editar prenda</div>
+              <button onClick={() => setEditingLine(null)}><XIcon size={16} className="sm:w-[18px] sm:h-[18px]" /></button>
+            </div>
+            <div className="text-xs sm:text-sm mb-3 truncate">{editingLine.name} • {editingLine.variantLabel || editingLine.sku}</div>
+            
+            {/* Descuento individual */}
+            <div className="mb-4">
+              <label className="block text-xs text-black mb-1.5">Descuento por prenda (%)</label>
+              <div className="flex items-center gap-2">
+                <input 
+                  type="text" 
+                  inputMode="decimal"
+                  value={editingLine.discount !== undefined && editingLine.discount !== null ? String(editingLine.discount) : ''} 
+                  onChange={e => {
+                    let raw = e.target.value.replace(/,/g, '.')
+                    // Permitir solo números y un punto decimal
+                    raw = raw.replace(/[^0-9.]/g, '')
+                    // Evitar múltiples puntos
+                    const parts = raw.split('.')
+                    if (parts.length > 2) {
+                      raw = parts[0] + '.' + parts.slice(1).join('')
+                    }
+                    // Si está vacío, permitir que se borre
+                    if (raw === '' || raw === '.') {
+                      setEditingLine(prev => prev ? { ...prev, discount: undefined } : null)
+                      return
+                    }
+                    const num = Number(raw)
+                    if (!isNaN(num) && num >= 0 && num <= 100) {
+                      setEditingLine(prev => prev ? { ...prev, discount: num } : null)
+                    }
+                  }} 
+                  placeholder="0"
+                  className="flex-1 border rounded px-2 py-1.5 text-xs sm:text-sm bg-white text-black" 
+                />
+                <span className="text-xs text-gray-600">%</span>
               </div>
-              <div className="flex-1 flex justify-end">
+              {editingLine.discount && editingLine.discount > 0 && (
+                <div className="text-[10px] text-red-600 mt-1">
+                  {(() => {
+                    const modificationsTotal = (editingLine.modifications || []).reduce((sum, mod) => sum + mod.price, 0)
+                    const priceWithModifications = editingLine.unitPrice + modificationsTotal
+                    const discountAmount = (priceWithModifications * editingLine.discount / 100)
+                    return `Descuento por unidad: -${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(discountAmount)} | Total: -${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(discountAmount * editingLine.quantity)}`
+                  })()}
+                </div>
+              )}
+            </div>
+
+            {/* Modificaciones */}
+            <div className="mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-xs text-black">Modificaciones</label>
                 <button 
-                  onClick={() => setShowCheckout(false)} 
-                  className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors"
+                  onClick={() => {
+                    setEditingLine(prev => prev ? { 
+                      ...prev, 
+                      modifications: [...(prev.modifications || []), { name: '', price: 0 }] 
+                    } : null)
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
                 >
-                  <XIcon size={18} className="text-gray-500" />
+                  <PlusIcon size={12} /> Agregar
                 </button>
+              </div>
+              <div className="space-y-2 max-h-40 overflow-y-auto">
+                {editingLine.modifications && editingLine.modifications.length > 0 ? (
+                  editingLine.modifications.map((mod, idx) => (
+                    <div key={idx} className="flex gap-2 items-start border rounded p-2">
+                      <div className="flex-1">
+                        <input 
+                          type="text" 
+                          value={mod.name} 
+                          onChange={e => {
+                            const newMods = [...(editingLine.modifications || [])]
+                            newMods[idx] = { ...mod, name: e.target.value }
+                            setEditingLine(prev => prev ? { ...prev, modifications: newMods } : null)
+                          }} 
+                          placeholder="Nombre de la modificación"
+                          className="w-full border rounded px-2 py-1 text-xs bg-white text-black mb-1" 
+                        />
+                        <input 
+                          type="text" 
+                          inputMode="decimal"
+                          value={mod.price || ''} 
+                          onChange={e => {
+                            const raw = e.target.value.replace(/,/g, '.').replace(/[^0-9.]/g, '')
+                            const num = raw === '' ? 0 : Number(raw)
+                            if (!isNaN(num) && num >= 0) {
+                              const newMods = [...(editingLine.modifications || [])]
+                              newMods[idx] = { ...mod, price: num }
+                              setEditingLine(prev => prev ? { ...prev, modifications: newMods } : null)
+                            }
+                          }} 
+                          placeholder="Precio"
+                          className="w-full border rounded px-2 py-1 text-xs bg-white text-black text-right" 
+                        />
+                      </div>
+                      <button 
+                        onClick={() => {
+                          const newMods = editingLine.modifications?.filter((_, i) => i !== idx) || []
+                          setEditingLine(prev => prev ? { ...prev, modifications: newMods.length > 0 ? newMods : undefined } : null)
+                        }}
+                        className="text-red-600 flex-shrink-0 mt-1"
+                      >
+                        <XIcon size={14} />
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-xs text-gray-500 text-center py-2">No hay modificaciones</div>
+                )}
+              </div>
+              {editingLine.modifications && editingLine.modifications.length > 0 && (
+                <div className="text-[10px] text-blue-600 mt-2">
+                  Total modificaciones: {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(
+                    (editingLine.modifications || []).reduce((sum, mod) => sum + mod.price, 0) * editingLine.quantity
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Resumen */}
+            <div className="mb-4 p-2 bg-gray-50 rounded border">
+              <div className="text-xs text-gray-600 mb-1">Resumen</div>
+              <div className="text-xs space-y-0.5">
+                <div className="flex justify-between">
+                  <span>Precio unitario:</span>
+                  <span>{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(editingLine.unitPrice)}</span>
+                </div>
+                {editingLine.modifications && editingLine.modifications.length > 0 && (
+                  <div className="flex justify-between text-blue-600">
+                    <span>Modificaciones:</span>
+                    <span>+{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(
+                      (editingLine.modifications || []).reduce((sum, mod) => sum + mod.price, 0)
+                    )}</span>
+                  </div>
+                )}
+                {editingLine.discount && editingLine.discount > 0 && (() => {
+                  const modificationsTotal = (editingLine.modifications || []).reduce((sum, mod) => sum + mod.price, 0)
+                  const priceWithModifications = editingLine.unitPrice + modificationsTotal
+                  const discountAmount = (priceWithModifications * editingLine.discount / 100)
+                  const discountDisplay = editingLine.discount % 1 === 0 ? editingLine.discount : editingLine.discount.toFixed(2)
+                  return (
+                    <div className="flex justify-between text-red-600">
+                      <span>Descuento ({discountDisplay}%):</span>
+                      <span>-{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(discountAmount)}</span>
+                    </div>
+                  )
+                })()}
+                <div className="flex justify-between font-semibold pt-1 border-t border-gray-300">
+                  <span>Total por unidad:</span>
+                  <span>{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(
+                    (() => {
+                      const modificationsTotal = (editingLine.modifications || []).reduce((sum, mod) => sum + mod.price, 0)
+                      const priceWithModifications = editingLine.unitPrice + modificationsTotal
+                      const discountPercent = Math.max(0, Math.min(100, editingLine.discount || 0))
+                      const discountAmount = (priceWithModifications * discountPercent / 100)
+                      return priceWithModifications - discountAmount
+                    })()
+                  )}</span>
+                </div>
+                <div className="flex justify-between font-semibold text-sm">
+                  <span>Total ({editingLine.quantity} unidades):</span>
+                  <span>{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(
+                    (() => {
+                      const modificationsTotal = (editingLine.modifications || []).reduce((sum, mod) => sum + mod.price, 0)
+                      const priceWithModifications = editingLine.unitPrice + modificationsTotal
+                      const discountPercent = Math.max(0, Math.min(100, editingLine.discount || 0))
+                      const discountAmount = (priceWithModifications * discountPercent / 100)
+                      const finalPricePerUnit = priceWithModifications - discountAmount
+                      return finalPricePerUnit * editingLine.quantity
+                    })()
+                  )}</span>
+                </div>
               </div>
             </div>
 
+            <div className="flex flex-col sm:flex-row justify-end gap-2">
+              <button className="w-full sm:w-auto px-3 py-2 border rounded text-xs sm:text-sm" onClick={() => setEditingLine(null)}>Cancelar</button>
+              <button 
+                className="w-full sm:w-auto px-3 py-2 border border-black bg-gray-200 hover:bg-gray-300 text-black rounded text-xs sm:text-sm" 
+                onClick={() => {
+                  if (editingLine) {
+                    updateLine(editingLine.id, {
+                      discount: editingLine.discount && editingLine.discount > 0 ? editingLine.discount : undefined,
+                      modifications: editingLine.modifications && editingLine.modifications.length > 0 
+                        ? editingLine.modifications.filter(m => m.name.trim() !== '') 
+                        : undefined
+                    })
+                    setEditingLine(null)
+                  }
+                }}
+              >
+                Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Checkout modal */}
+      {showCheckout && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[95vh] overflow-hidden flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <div className="flex-1">
+                <h2 className="text-lg font-bold text-black tracking-tight">Finalizar Venta</h2>
+                <p className="text-xs text-gray-500 mt-0.5">Complete la información del cliente y el pago</p>
+              </div>
+              <button 
+                onClick={() => setShowCheckout(false)} 
+                className="w-8 h-8 rounded hover:bg-gray-100 flex items-center justify-center transition-colors"
+              >
+                <XIcon size={18} className="text-gray-500" />
+              </button>
+            </div>
+
             {/* Content */}
-            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6">
               {/* Información del Cliente */}
-              <div className="bg-white rounded-xl border border-gray-200 p-5">
-                <h3 className="text-sm font-semibold text-gray-900 mb-4">
+              <div>
+                <h3 className="text-sm font-bold text-black mb-4 tracking-tight uppercase">
                   Información del Cliente
                 </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-3">
                   <div>
                     <label className="block text-xs font-medium text-gray-700 mb-1.5">Nombre *</label>
                     <input 
                       value={customer.name || ''} 
                       onChange={e => setCustomer(prev => ({ ...prev, name: e.target.value }))} 
                       placeholder="Nombre completo del cliente" 
-                      className="w-full border border-gray-300 rounded-lg px-4 py-2.5 bg-white text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" 
+                      className="w-full border border-gray-200 rounded px-3 py-2 bg-white text-sm text-black placeholder:text-gray-400 focus:outline-none focus:border-black transition-colors" 
                     />
                   </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1.5">Teléfono (opcional)</label>
-                    <input 
-                      value={customer.phone || ''} 
-                      onChange={e => setCustomer(prev => ({ ...prev, phone: e.target.value }))} 
-                      placeholder="Número de teléfono" 
-                      className="w-full border border-gray-300 rounded-lg px-4 py-2.5 bg-white text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" 
-                    />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1.5">Teléfono</label>
+                      <input 
+                        value={customer.phone || ''} 
+                        onChange={e => setCustomer(prev => ({ ...prev, phone: e.target.value }))} 
+                        placeholder="Número de teléfono" 
+                        className="w-full border border-gray-200 rounded px-3 py-2 bg-white text-sm text-black placeholder:text-gray-400 focus:outline-none focus:border-black transition-colors" 
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1.5">Correo</label>
+                      <input 
+                        value={customer.email || ''} 
+                        onChange={e => setCustomer(prev => ({ ...prev, email: e.target.value }))} 
+                        placeholder="correo@ejemplo.com" 
+                        className="w-full border border-gray-200 rounded px-3 py-2 bg-white text-sm text-black placeholder:text-gray-400 focus:outline-none focus:border-black transition-colors" 
+                      />
+                    </div>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1.5">Correo (opcional)</label>
-                    <input 
-                      value={customer.email || ''} 
-                      onChange={e => setCustomer(prev => ({ ...prev, email: e.target.value }))} 
-                      placeholder="correo@ejemplo.com" 
-                      className="w-full border border-gray-300 rounded-lg px-4 py-2.5 bg-white text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" 
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1.5">Cédula (opcional)</label>
+                    <label className="block text-xs font-medium text-gray-500 mb-1.5">Cédula</label>
                     <input 
                       value={customer.cedula || ''} 
                       onChange={e => setCustomer(prev => ({ ...prev, cedula: e.target.value }))} 
                       placeholder="Número de cédula" 
-                      className="w-full border border-gray-300 rounded-lg px-4 py-2.5 bg-white text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" 
+                      className="w-full border border-gray-200 rounded px-3 py-2 bg-white text-sm text-black placeholder:text-gray-400 focus:outline-none focus:border-black transition-colors" 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1.5">Dirección</label>
+                    <input 
+                      value={customer.address || ''} 
+                      onChange={e => setCustomer(prev => ({ ...prev, address: e.target.value }))} 
+                      placeholder="Dirección completa" 
+                      className="w-full border border-gray-200 rounded px-3 py-2 bg-white text-sm text-black placeholder:text-gray-400 focus:outline-none focus:border-black transition-colors" 
                     />
                   </div>
                 </div>
               </div>
 
               {/* Métodos de Pago */}
-              <div className="bg-white rounded-xl border border-gray-200 p-5">
-                <h3 className="text-sm font-semibold text-gray-900 mb-4">
+              <div>
+                <h3 className="text-sm font-bold text-black mb-4 tracking-tight uppercase">
                   Métodos de Pago
                 </h3>
-                <div className="space-y-3 mb-4">
+                <div className="space-y-3">
                   {paymentParts.map((p, i) => (
-                    <div key={i} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                    <div key={i} className="flex items-center gap-2">
                       <select 
                         value={p.method} 
                         onChange={e => updatePayment(i, { method: e.target.value as PaymentMethod })} 
-                        className="flex-shrink-0 border border-gray-300 rounded-lg px-4 py-2.5 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm font-medium"
+                        className="flex-shrink-0 border border-gray-200 rounded px-3 py-2 bg-white text-sm text-black focus:outline-none focus:border-black transition-colors font-medium"
                       >
                         <option value="cash">💵 Efectivo</option>
                         <option value="card">💳 Tarjeta</option>
@@ -1750,45 +1911,53 @@ export function ClothingPOS() {
                         value={formatNumberWithSeparators(p.amount)} 
                         onChange={e => handlePaymentAmountChange(i, e.target.value)} 
                         placeholder="0" 
-                        className="flex-1 border border-gray-300 rounded-lg px-4 py-2.5 bg-white text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-right font-semibold" 
+                        className="flex-1 border border-gray-200 rounded px-3 py-2 bg-white text-sm text-black placeholder:text-gray-400 focus:outline-none focus:border-black transition-colors text-right font-semibold" 
                       />
                       {paymentParts.length > 1 && (
                         <button 
                           onClick={() => removePayment(i)} 
-                          className="w-9 h-9 rounded-lg hover:bg-red-50 flex items-center justify-center transition-colors text-red-500 hover:text-red-600"
+                          className="w-9 h-9 rounded hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-500 hover:text-gray-700"
                         >
-                          <XIcon size={18} />
+                          <XIcon size={16} />
                         </button>
                       )}
                     </div>
                   ))}
                   <button 
                     onClick={addPaymentPart} 
-                    className="w-full border-2 border-dashed border-gray-300 rounded-lg px-4 py-2.5 text-sm font-medium text-gray-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
+                    className="w-full border border-gray-200 border-dashed rounded px-3 py-2 text-sm font-medium text-gray-500 hover:border-gray-300 hover:text-gray-700 hover:bg-gray-50 transition-colors"
                   >
                     + Agregar otro método de pago
                   </button>
                 </div>
                 
                 {/* Resumen de pagos */}
-                <div className="pt-4 border-t border-gray-200 space-y-2">
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-gray-600">Total a pagar:</span>
-                    <span className="font-semibold text-gray-900">
+                <div className="pt-4 mt-4 border-t border-gray-100 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-gray-600">Total a pagar</span>
+                    <span className="text-sm font-bold text-black">
                       {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(totalToPay)}
                     </span>
                   </div>
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-gray-600">Total pagado:</span>
-                    <span className={`font-semibold ${totalPayments(paymentParts) >= totalToPay ? 'text-green-600' : 'text-orange-600'}`}>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-gray-600">Total pagado</span>
+                    <span className={`text-sm font-bold ${totalPayments(paymentParts) >= totalToPay ? 'text-green-600' : 'text-orange-600'}`}>
                       {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(totalPayments(paymentParts))}
                     </span>
                   </div>
                   {totalPayments(paymentParts) > totalToPay && (
-                    <div className="flex justify-between items-center text-sm pt-2 border-t border-gray-200">
-                      <span className="text-gray-600">Cambio a entregar:</span>
-                      <span className="font-bold text-green-600">
+                    <div className="flex justify-between items-center pt-2 border-t border-gray-100">
+                      <span className="text-sm text-gray-600">Cambio a entregar</span>
+                      <span className="text-sm font-bold text-green-600">
                         {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Math.max(0, totalPayments(paymentParts) - totalToPay))}
+                      </span>
+                    </div>
+                  )}
+                  {totalPayments(paymentParts) < totalToPay && totalPayments(paymentParts) > 0 && (
+                    <div className="flex justify-between items-center pt-2 border-t border-gray-100">
+                      <span className="text-sm text-gray-600">Dinero faltante</span>
+                      <span className="text-sm font-bold text-orange-600">
+                        {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Math.max(0, totalToPay - totalPayments(paymentParts)))}
                       </span>
                     </div>
                   )}
@@ -1797,22 +1966,20 @@ export function ClothingPOS() {
             </div>
 
             {/* Footer Actions */}
-            <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex flex-col sm:flex-row justify-end gap-3">
+            <div className="px-5 py-4 border-t border-gray-100 flex flex-col sm:flex-row justify-end gap-2 bg-gray-50">
               <button 
                 onClick={() => setShowCheckout(false)} 
-                className="px-6 py-2.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-white transition-colors"
+                className="px-4 py-2 border border-gray-300 rounded text-sm font-medium text-black hover:bg-white transition-colors bg-white"
               >
                 Cancelar
               </button>
               <button 
                 disabled={isProcessingSale || totalPayments(paymentParts) < totalToPay || !customer.name}
                 onClick={finalizeSale} 
-                className={`px-6 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-all ${
-                  isProcessingSale || totalPayments(paymentParts) < totalToPay
+                className={`px-4 py-2 rounded text-sm font-semibold flex items-center justify-center gap-2 transition-colors ${
+                  isProcessingSale || totalPayments(paymentParts) < totalToPay || !customer.name
                     ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
-                    : !customer.name
-                    ? 'bg-blue-400 hover:bg-blue-500 text-white shadow-lg hover:shadow-xl'
-                    : 'bg-black hover:bg-gray-800 text-white shadow-lg hover:shadow-xl'
+                    : 'bg-black hover:bg-gray-800 text-white'
                 }`}
               >
                 <SaveIcon size={16} /> 
@@ -1825,231 +1992,361 @@ export function ClothingPOS() {
 
       {/* Sale detail modal */}
       {detailSale && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-2 sm:p-3">
-          <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-2 sm:pb-3 mb-2 sm:mb-3 border-b border-gray-100 p-3 sm:p-4 sticky top-0 bg-white z-10">
-              <div className="font-semibold text-sm sm:text-base text-black">Detalle de venta</div>
-              <button onClick={() => setDetailSale(null)} className="text-gray-700 hover:text-black"><XIcon size={16} className="sm:w-[18px] sm:h-[18px]" /></button>
-            </div>
-            <div className="p-3 sm:p-4 space-y-2 sm:space-y-3 text-xs sm:text-sm text-black text-left">
-              <div className="grid grid-cols-2 gap-2 text-left">
-                <div><span className="font-medium">Folio:</span> {detailSale.id}</div>
-                <div><span className="font-medium">Fecha:</span> {new Date(detailSale.at).toLocaleString()}</div>
-                <div><span className="font-medium">Cliente:</span> {detailSale.customer?.name || '—'}</div>
-                <div><span className="font-medium">Teléfono:</span> {detailSale.customer?.phone || '—'}</div>
-                <div><span className="font-medium">Correo:</span> {detailSale.customer?.email || '—'}</div>
-                <div><span className="font-medium">Cédula:</span> {detailSale.customer?.cedula || '—'}</div>
+        <div className="fixed inset-0 z-50 overflow-y-auto overflow-x-hidden">
+          {/* Blur overlay */}
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-0 transition-all duration-300" onClick={() => setDetailSale(null)}></div>
+          
+          {/* Contenedor centrado */}
+          <div className="absolute inset-0 flex items-center justify-center p-4 z-10 pointer-events-none min-h-full overflow-x-hidden">
+            <div className="bg-white w-full max-w-md rounded-[24px] shadow-2xl overflow-hidden flex flex-col relative pointer-events-auto max-h-[90vh] my-4 overflow-x-hidden">
+              
+              {/* Scrollable Content */}
+              <div className="flex-1 overflow-y-auto overflow-x-hidden">
+              {/* Ticket Info Header */}
+              <div className="pt-8 pb-4 px-8 flex flex-col space-y-4">
+                  {/* Logo */}
+                  {logoBase64 && (
+                      <div className="flex justify-center mb-4">
+                          <img 
+                              src={logoBase64} 
+                              alt="Logo" 
+                              className="h-16 object-contain max-w-full"
+                          />
+                      </div>
+                  )}
+                  
+                  {/* Ticket ID */}
+                  <div className="flex flex-col">
+                      <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-1">TICKET ID</span>
+                      <span className="text-sm font-bold text-gray-900 font-mono">{detailSale.id}</span>
+                  </div>
+
+                  {/* Date & Time */}
+                  <div className="flex flex-col">
+                      <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-1">DATE & TIME</span>
+                      <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                          <span>{new Date(detailSale.at).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }).replace('.', '')}</span>
+                          <span className="w-1 h-1 rounded-full bg-gray-300"></span>
+                          <span>{new Date(detailSale.at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                  </div>
               </div>
-              <div>
-                <div className="font-medium mb-1">Productos</div>
-                <div className="grid grid-cols-5 font-medium border-b pb-1 text-left"><div>Producto</div><div>Variante</div><div>SKU</div><div>Cant</div><div>Total</div></div>
-                <div className="max-h-64 overflow-auto text-left">
-                  {detailSale.items.map((l, i) => (
-                    <div key={i} className="grid grid-cols-5 py-1 border-b last:border-b-0">
-                      <div className="truncate">{l.name}</div>
-                      <div className="truncate">{l.variantLabel || '—'}</div>
-                      <div className="truncate">{l.sku}</div>
-                      <div>{l.quantity}</div>
-                      <div>{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(l.unitPrice * l.quantity)}</div>
-                    </div>
-                  ))}
-                </div>
+
+              {/* Dashed Divider */}
+              <div className="relative w-full h-px my-2">
+                <div className="absolute inset-0 border-t-2 border-dashed border-gray-200"></div>
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 w-6 h-6 bg-gray-900 rounded-full"></div>
+                <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-6 h-6 bg-gray-900 rounded-full"></div>
               </div>
-              <div>
-                <div className="font-medium mb-1">Pagos</div>
-                <div className="grid grid-cols-2 gap-2 text-left">
-                  {detailSale.payments.map((p, i) => (
-                    <div key={i} className="grid grid-cols-2 border rounded px-2 py-1">
-                      <div>{p.method}</div>
-                      <div className="font-semibold">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(p.amount)}</div>
-                    </div>
-                  ))}
-                </div>
+
+              {/* Ticket Details */}
+              <div className="px-8 py-6 space-y-6">
+
+                   {/* Customer Info */}
+                  <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                      <div className="text-sm font-bold text-gray-900 mb-2">{detailSale.customer?.name || 'Cliente General'}</div>
+                      <div className="space-y-1.5">
+                          {detailSale.customer?.phone && (
+                              <div className="flex items-start gap-2">
+                                  <span className="text-xs text-gray-400 font-medium whitespace-nowrap">Tel:</span>
+                                  <span className="text-xs text-gray-600 break-words">{detailSale.customer.phone}</span>
+                              </div>
+                          )}
+                          {detailSale.customer?.email && (
+                              <div className="flex items-start gap-2">
+                                  <span className="text-xs text-gray-400 font-medium whitespace-nowrap">Email:</span>
+                                  <span className="text-xs text-gray-600 break-all">{detailSale.customer.email}</span>
+                              </div>
+                          )}
+                          {detailSale.customer?.cedula && (
+                              <div className="flex items-start gap-2">
+                                  <span className="text-xs text-gray-400 font-medium whitespace-nowrap">Cédula:</span>
+                                  <span className="text-xs text-gray-600 break-words">{detailSale.customer.cedula}</span>
+                              </div>
+                          )}
+                          {detailSale.customer?.address && (
+                              <div className="flex items-start gap-2">
+                                  <span className="text-xs text-gray-400 font-medium whitespace-nowrap">Dirección:</span>
+                                  <span className="text-xs text-gray-600 break-words">{detailSale.customer.address}</span>
+                              </div>
+                          )}
+                          {!detailSale.customer?.phone && !detailSale.customer?.email && !detailSale.customer?.cedula && !detailSale.customer?.address && (
+                              <span className="text-xs text-gray-400">Sin datos adicionales</span>
+                          )}
+                      </div>
+                  </div>
+
+                   {/* Products Summary */}
+                  <div className="border-t border-gray-100 pt-4">
+                      <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-2 block">Products</span>
+                      <div className="space-y-2">
+                           {detailSale.items.map((item, idx) => (
+                              <div key={idx} className="flex items-center gap-3">
+                                  {/* Product Image */}
+                                  <div className="w-12 h-12 rounded-lg bg-gray-100 border border-gray-200 flex-shrink-0 overflow-hidden">
+                                      {item.imageUrl ? (
+                                          <img 
+                                              src={item.imageUrl} 
+                                              alt={item.name}
+                                              className="w-full h-full object-cover"
+                                              onError={(e) => {
+                                                  (e.target as HTMLImageElement).style.display = 'none'
+                                              }}
+                                          />
+                                      ) : (
+                                          <div className="w-full h-full flex items-center justify-center">
+                                              <span className="text-gray-400 text-[8px]">IMG</span>
+                                          </div>
+                                      )}
+                                  </div>
+                                  {/* Product Name and Quantity */}
+                                  <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
+                                      <div className="flex-1 min-w-0">
+                                          <div className="text-xs text-gray-900 font-medium">{item.name}</div>
+                                          {item.variantLabel && (
+                                              <div className="text-[10px] text-gray-500">{item.variantLabel}</div>
+                                          )}
+                                      </div>
+                                      <span className="text-xs font-mono text-gray-400 whitespace-nowrap">x{item.quantity}</span>
+                                  </div>
+                              </div>
+                           ))}
+                      </div>
+                  </div>
               </div>
-              <div className="border-t pt-2 grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm text-left">
-                <div><span className="text-black">Subtotal:</span> <span className="font-semibold">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(detailSale.subtotal)}</span></div>
-                <div><span className="text-black">Descuento:</span> <span className="font-semibold">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(detailSale.discount)}</span></div>
-                <div><span className="text-black">Total:</span> <span className="font-semibold">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(detailSale.total)}</span></div>
+              
+              {/* Barcode */}
+              <div className="pb-8 px-8 flex flex-col items-center">
+                  <div className="h-12 w-full flex justify-center items-stretch gap-[3px] opacity-80 overflow-hidden">
+                     {Array.from({ length: 45 }).map((_, i) => (
+                       <div key={i} className="bg-black flex-shrink-0" style={{ width: Math.random() > 0.6 ? '3px' : '1px' }}></div>
+                     ))}
+                  </div>
+                   <div className="flex justify-between w-full text-[10px] font-mono text-gray-400 mt-1 px-4 tracking-widest">
+                      <span>{detailSale.id.slice(0, 4)}</span>
+                      <span>{detailSale.id.slice(-4)}</span>
+                   </div>
               </div>
-              <div className="flex justify-start pt-2 border-t border-gray-100">
-                <button className="w-full sm:w-auto px-3 py-2 border rounded text-xs sm:text-sm" onClick={() => setDetailSale(null)}>Cerrar</button>
               </div>
+
+              {/* Close Button absolute or bottom */}
+              <button 
+                  onClick={() => setDetailSale(null)}
+                  className="absolute top-4 right-4 p-2 text-gray-400 hover:text-gray-600 transition-colors rounded-full hover:bg-gray-100"
+              >
+                  <XIcon size={20} />
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Invoice PDF modal */}
+      {/* Invoice PDF modal - Ticket Style */}
       {invoiceSale && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between pb-2 mb-2 border-b border-gray-100 px-4 pt-3">
-              <div className="font-semibold text-black text-sm">Factura de venta</div>
-              <button onClick={() => setInvoiceSale(null)} className="text-gray-700 hover:text-black"><XIcon size={16} /></button>
-            </div>
-            <div className="flex-1 overflow-y-auto px-4 pb-3" style={{ fontFamily: 'Helvetica Neue, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif' }}>
-              <style>{`
-                @font-face {
-                  font-family: 'Helvetica Neue';
-                  src: url('/fonts/HelveticaNeueMedium.otf') format('opentype');
-                  font-weight: 500;
-                  font-style: normal;
-                  font-display: swap;
-                }
-              `}</style>
-              {/* Header with Logo */}
-              <div className="flex items-center mb-3 pb-2 border-b border-gray-200">
-                {logoBase64 && <img src={logoBase64} alt="Dwell Logo" className="w-12 h-12 object-contain mr-3" />}
-                <div className="flex-1">
-                  <div className="text-lg font-bold text-gray-900 mb-0.5" style={{ letterSpacing: '-0.3px' }}>Ticket de Venta</div>
-                  <div className="text-xs text-gray-600 font-medium">Factura #{invoiceSale.id}</div>
-                </div>
-              </div>
-
-              {/* Info Section */}
-              <div className="mb-3 space-y-1">
-                <div className="flex justify-between text-xs">
-                  <span className="text-gray-600 font-medium">Fecha y Hora:</span>
-                  <span className="text-gray-900 font-semibold">{new Date(invoiceSale.at).toLocaleString('es-CO', { dateStyle: 'long', timeStyle: 'short' })}</span>
-                </div>
-                {invoiceSale.seller && (
-                  <div className="flex justify-between text-xs">
-                    <span className="text-gray-600 font-medium">Vendedor:</span>
-                    <span className="text-gray-900 font-semibold">{invoiceSale.seller}</span>
+        <div className="fixed inset-0 z-50 overflow-y-auto overflow-x-hidden">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-0 transition-all duration-300" onClick={() => setInvoiceSale(null)}></div>
+          
+          <div className="absolute inset-0 flex items-center justify-center p-4 z-10 pointer-events-none min-h-full overflow-x-hidden">
+            <div className="bg-white w-full max-w-md rounded-[24px] shadow-2xl overflow-hidden flex flex-col relative pointer-events-auto max-h-[90vh] my-4 overflow-x-hidden">
+              
+              {/* Scrollable Content */}
+              <div className="flex-1 overflow-y-auto overflow-x-hidden">
+              {/* Ticket Info Header */}
+              <div className="pt-8 pb-4 px-8 flex flex-col space-y-4">
+                  {/* Logo */}
+                  {logoBase64 && (
+                      <div className="flex justify-center mb-4">
+                          <img 
+                              src={logoBase64} 
+                              alt="Logo" 
+                              className="h-16 object-contain"
+                          />
+                      </div>
+                  )}
+                  
+                  {/* Ticket ID */}
+                  <div className="flex flex-col">
+                      <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-1">TICKET ID</span>
+                      <span className="text-sm font-bold text-gray-900 font-mono">{invoiceSale.id}</span>
                   </div>
-                )}
-              </div>
 
-              {/* Items Table */}
-              <table className="w-full border-collapse mb-3">
-                <thead>
-                  <tr className="bg-gray-50 border-b border-gray-200">
-                    <th className="py-1.5 text-left text-[9px] font-semibold text-gray-600 uppercase tracking-wide">Producto</th>
-                    <th className="py-1.5 text-center text-[9px] font-semibold text-gray-600 uppercase tracking-wide">Cantidad</th>
-                    <th className="py-1.5 text-right text-[9px] font-semibold text-gray-600 uppercase tracking-wide">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {invoiceSale.items.map((l, i) => (
-                    <tr key={i} className="border-b border-gray-100">
-                      <td className="py-1.5">
-                        <div className="font-medium text-gray-900 text-xs mb-0.5">{l.name}</div>
-                        {l.variantLabel && (
-                          <div className="text-[9px] text-gray-600 mb-0.5">{l.variantLabel}</div>
-                        )}
-                        <div className="text-[8px] text-gray-400">SKU: {l.sku}</div>
-                      </td>
-                      <td className="py-1.5 text-center font-medium text-gray-900 text-xs">
-                        x{l.quantity}
-                      </td>
-                      <td className="py-1.5 text-right font-semibold text-gray-900 text-xs">
-                        {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(l.unitPrice * l.quantity)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-
-              {/* Totals */}
-              <div className="mb-3 pt-2 border-t border-gray-200">
-                <div className="flex justify-between py-1 text-xs">
-                  <span className="text-gray-600 font-medium">Subtotal:</span>
-                  <span className="text-gray-900 font-semibold">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(invoiceSale.subtotal)}</span>
-                </div>
-                {invoiceSale.discount > 0 && (
-                  <div className="flex justify-between py-1 text-xs">
-                    <span className="text-gray-600 font-medium">Descuento:</span>
-                    <span className="text-red-600 font-semibold">-{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(invoiceSale.discount)}</span>
+                  {/* Date & Time */}
+                  <div className="flex flex-col">
+                      <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-1">DATE & TIME</span>
+                      <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                          <span>{new Date(invoiceSale.at).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }).replace('.', '')}</span>
+                          <span className="w-1 h-1 rounded-full bg-gray-300"></span>
+                          <span>{new Date(invoiceSale.at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
                   </div>
-                )}
-                <div className="flex justify-between py-2 mt-1 pt-2 border-t border-gray-200">
-                  <span className="text-sm font-bold text-gray-900">Total a Pagar:</span>
-                  <span className="text-base font-bold text-gray-900">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(invoiceSale.total)}</span>
-                </div>
-              </div>
 
-              {/* Payments */}
-              {invoiceSale.payments.length > 0 && (
-                <div className="mb-3 pt-2 border-t border-gray-200">
-                  <div className="text-[9px] font-semibold text-gray-600 uppercase tracking-wide mb-2">Métodos de Pago</div>
-                  <div className="space-y-1">
-                    {invoiceSale.payments.map((p, i) => {
-                      const methodNames: Record<string, string> = {
-                        'cash': 'Efectivo',
-                        'card': 'Tarjeta',
-                        'transfer': 'Transferencia',
-                        'voucher': 'Vale',
-                        'store-credit': 'Crédito interno'
-                      }
-                      return (
-                        <div key={i} className="flex justify-between text-xs">
-                          <span className="text-gray-600 capitalize">{methodNames[p.method] || p.method}:</span>
-                          <span className="font-semibold text-gray-900">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(p.amount)}</span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Customer Info */}
-              {invoiceSale.customer && (
-                <div className="mb-3 pt-2 border-t border-gray-200">
-                  <div className="text-[9px] font-semibold text-gray-600 uppercase tracking-wide mb-2">Información del Cliente</div>
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-900">
-                    <div>
-                      <span className="text-gray-600 font-medium">Nombre:</span>
-                      <span className="ml-1 font-medium">{invoiceSale.customer.name || '—'}</span>
+                  {/* Seller info */}
+                  {invoiceSale.seller && (
+                    <div className="flex flex-col">
+                        <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-1">Vendedor</span>
+                        <span className="text-sm font-medium text-gray-900">{invoiceSale.seller}</span>
                     </div>
-                    {invoiceSale.customer.phone && (
-                      <div>
-                        <span className="text-gray-600 font-medium">Teléfono:</span>
-                        <span className="ml-1 font-medium">{invoiceSale.customer.phone}</span>
-                      </div>
-                    )}
-                    {invoiceSale.customer.cedula && (
-                      <div>
-                        <span className="text-gray-600 font-medium">Cédula:</span>
-                        <span className="ml-1 font-medium">{invoiceSale.customer.cedula}</span>
-                      </div>
-                    )}
-                    {invoiceSale.customer.email && (
-                      <div>
-                        <span className="text-gray-600 font-medium">Email:</span>
-                        <span className="ml-1 font-medium">{invoiceSale.customer.email}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+                  )}
+              </div>
 
-              {/* Company Info */}
-              <div className="mb-3 pt-2 border-t border-gray-200">
-                <div className="text-center">
-                  <h3 className="text-xs font-bold text-gray-900 mb-1" style={{ letterSpacing: '0.5px' }}>DWELL ROPA DEPORTIVA</h3>
-                  <p className="text-[9px] text-gray-600 leading-relaxed mb-2">
-                    Somos una empresa Santandereana especializada en ropa deportiva premium y de alto rendimiento, fabricada con las mejores textiles del mercado y con la mejor calidad garantizada.
+              {/* Dashed Divider */}
+              <div className="relative w-full h-px my-2">
+                <div className="absolute inset-0 border-t-2 border-dashed border-gray-200"></div>
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 w-6 h-6 bg-gray-900 rounded-full"></div>
+                <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-6 h-6 bg-gray-900 rounded-full"></div>
+              </div>
+
+              {/* Ticket Details */}
+              <div className="px-8 py-6 space-y-6">
+
+                   {/* Customer Info */}
+                  <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                      <div className="text-sm font-bold text-gray-900 mb-2">{invoiceSale.customer?.name || 'Cliente General'}</div>
+                      <div className="space-y-1.5">
+                          {invoiceSale.customer?.phone && (
+                              <div className="flex items-start gap-2">
+                                  <span className="text-xs text-gray-400 font-medium whitespace-nowrap">Tel:</span>
+                                  <span className="text-xs text-gray-600 break-words">{invoiceSale.customer.phone}</span>
+                              </div>
+                          )}
+                          {invoiceSale.customer?.email && (
+                              <div className="flex items-start gap-2">
+                                  <span className="text-xs text-gray-400 font-medium whitespace-nowrap">Email:</span>
+                                  <span className="text-xs text-gray-600 break-all">{invoiceSale.customer.email}</span>
+                              </div>
+                          )}
+                          {invoiceSale.customer?.cedula && (
+                              <div className="flex items-start gap-2">
+                                  <span className="text-xs text-gray-400 font-medium whitespace-nowrap">Cédula:</span>
+                                  <span className="text-xs text-gray-600 break-words">{invoiceSale.customer.cedula}</span>
+                              </div>
+                          )}
+                          {invoiceSale.customer?.address && (
+                              <div className="flex items-start gap-2">
+                                  <span className="text-xs text-gray-400 font-medium whitespace-nowrap">Dirección:</span>
+                                  <span className="text-xs text-gray-600 break-words">{invoiceSale.customer.address}</span>
+                              </div>
+                          )}
+                          {!invoiceSale.customer?.phone && !invoiceSale.customer?.email && !invoiceSale.customer?.cedula && !invoiceSale.customer?.address && (
+                              <span className="text-xs text-gray-400">Sin datos adicionales</span>
+                          )}
+                      </div>
+                  </div>
+
+                   {/* Products Summary */}
+                  <div className="border-t border-gray-100 pt-4">
+                      <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-2 block">Products</span>
+                      <div className="space-y-2">
+                           {invoiceSale.items.map((item, idx) => (
+                              <div key={idx} className="flex items-center gap-3">
+                                  {/* Product Image */}
+                                  <div className="w-12 h-12 rounded-lg bg-gray-100 border border-gray-200 flex-shrink-0 overflow-hidden">
+                                      {item.imageUrl ? (
+                                          <img 
+                                              src={item.imageUrl} 
+                                              alt={item.name}
+                                              className="w-full h-full object-cover"
+                                              onError={(e) => {
+                                                  (e.target as HTMLImageElement).style.display = 'none'
+                                              }}
+                                          />
+                                      ) : (
+                                          <div className="w-full h-full flex items-center justify-center">
+                                              <span className="text-gray-400 text-[8px]">IMG</span>
+                                          </div>
+                                      )}
+                                  </div>
+                                  {/* Product Name and Quantity */}
+                                  <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
+                                      <div className="flex-1 min-w-0">
+                                          <div className="text-xs text-gray-900 font-medium">{item.name}</div>
+                                          {item.variantLabel && (
+                                              <div className="text-[10px] text-gray-500">{item.variantLabel}</div>
+                                          )}
+                                      </div>
+                                      <div className="text-right">
+                                         <div className="text-xs font-mono text-gray-900 whitespace-nowrap">x{item.quantity}</div>
+                                         <div className="text-[10px] text-gray-500">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(item.unitPrice * item.quantity)}</div>
+                                      </div>
+                                  </div>
+                              </div>
+                           ))}
+                      </div>
+                  </div>
+                  
+                  {/* Totals */}
+                  <div className="border-t border-gray-100 pt-4 space-y-2">
+                      <div className="flex justify-between text-xs">
+                          <span className="text-gray-600">Subtotal</span>
+                          <span className="font-medium text-gray-900">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(invoiceSale.subtotal)}</span>
+                      </div>
+                      {invoiceSale.discount > 0 && (
+                          <div className="flex justify-between text-xs">
+                              <span className="text-gray-600">Descuento</span>
+                              <span className="font-medium text-red-600">-{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(invoiceSale.discount)}</span>
+                          </div>
+                      )}
+                      <div className="flex justify-between text-sm font-bold pt-2 border-t border-gray-100">
+                          <span className="text-gray-900">Total</span>
+                          <span className="text-gray-900">{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(invoiceSale.total)}</span>
+                      </div>
+                  </div>
+              </div>
+              
+              {/* Barcode */}
+              <div className="pb-4 px-8 flex flex-col items-center">
+                  <div className="h-12 w-full flex justify-center items-stretch gap-[3px] opacity-80 overflow-hidden">
+                     {Array.from({ length: 45 }).map((_, i) => (
+                       <div key={i} className="bg-black flex-shrink-0" style={{ width: Math.random() > 0.6 ? '3px' : '1px' }}></div>
+                     ))}
+                  </div>
+                   <div className="flex justify-between w-full text-[10px] font-mono text-gray-400 mt-1 px-4 tracking-widest">
+                      <span>{invoiceSale.id.slice(0, 4)}</span>
+                      <span>{invoiceSale.id.slice(-4)}</span>
+                   </div>
+              </div>
+
+              {/* Company Footer */}
+              <div className="px-8 pb-4 pt-4 border-t border-dashed border-gray-200 text-center">
+                  <h3 className="text-xs font-bold text-gray-900 mb-2" style={{ letterSpacing: '0.5px' }}>DWELL ROPA DEPORTIVA</h3>
+                  <p className="text-[9px] text-gray-600 leading-relaxed mb-2 max-w-xs mx-auto">
+                      Somos una empresa Santandereana especializada en ropa deportiva premium y de alto rendimiento, fabricada con las mejores textiles del mercado y con la mejor calidad garantizada.
                   </p>
-                  <div className="text-[8px] text-gray-500">
-                    <a href="https://dwell.com.co/" className="text-gray-600 hover:underline">www.dwell.com.co</a>
+                  <div className="mb-3 text-[8px] text-gray-500">
+                      <a href="https://dwellcol.com" target="_blank" rel="noopener noreferrer" className="text-gray-600 hover:underline">dwellcol.com</a>
                   </div>
-                </div>
+                  <div className="text-[9px] text-gray-400 space-y-1">
+                      <p>Gracias por su compra</p>
+                      <p>Este documento es válido como comprobante de pago</p>
+                      <p className="text-[8px] text-gray-500 mt-2">Cambios solo por talla, no devolución de dinero. Garantía de dos meses por prenda</p>
+                  </div>
+              </div>
               </div>
 
-              {/* Footer */}
-              <div className="pt-2 border-t border-dashed border-gray-300 text-center text-[9px] text-gray-400">
-                <div>Gracias por su compra</div>
-                <div className="mt-0.5">Este documento es válido como comprobante de pago</div>
-                <div className="mt-0.5 text-[8px] text-gray-500">
-                  Cambios solo por talla, no devolución de dinero. Garantía de dos meses por prenda.
-                </div>
+              {/* Footer Actions */}
+              <div className="p-4 bg-gray-50 border-t border-gray-100 flex gap-3">
+                  <button 
+                      onClick={() => setInvoiceSale(null)}
+                      className="flex-1 py-2.5 text-gray-600 font-medium text-xs rounded-xl border border-gray-200 bg-white hover:bg-gray-50 transition-colors"
+                  >
+                      Cerrar
+                  </button>
+                  <button 
+                      onClick={() => printInvoice(invoiceSale)}
+                      className="flex-1 py-2.5 text-white font-bold text-xs rounded-xl bg-black hover:bg-gray-800 flex items-center justify-center gap-2 transition-colors shadow-lg shadow-black/20"
+                  >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
+                      Imprimir Ticket
+                  </button>
               </div>
-            </div>
-            
-            {/* Actions */}
-            <div className="flex justify-end gap-2 px-4 py-3 border-t border-gray-100">
-              <button className="px-3 py-1.5 border rounded text-gray-700 hover:bg-gray-50 text-xs" onClick={() => setInvoiceSale(null)}>Cerrar</button>
-              <button className="px-3 py-1.5 border border-black bg-gray-200 hover:bg-gray-300 text-black rounded text-xs" onClick={() => printInvoice(invoiceSale)}>Imprimir</button>
+
+              {/* Close Button absolute top right */}
+              <button 
+                  onClick={() => setInvoiceSale(null)}
+                  className="absolute top-4 right-4 p-2 text-gray-400 hover:text-gray-600 transition-colors rounded-full hover:bg-gray-100"
+              >
+                  <XIcon size={20} />
+              </button>
             </div>
           </div>
         </div>

@@ -87,7 +87,13 @@ export function AdminInventory() {
   const [filterCategory, setFilterCategory] = useState<string>('all')
   const [filterStatus, setFilterStatus] = useState<string>('all')
   const [reposiciones, setReposiciones] = useState<ReposicionItem[]>([])
+  const [sortBy, setSortBy] = useState<'name' | 'sku' | 'category' | 'currentStock' | 'price'>('name')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
   const { formatCurrency, getFontSizeClass } = useConfig()
+  const numberFormatter = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
+  const formatPrice = (value: number) => (Number.isFinite(value) ? numberFormatter.format(value) : value)
   
   // Cargar datos desde Supabase
   useEffect(() => {
@@ -207,7 +213,7 @@ export function AdminInventory() {
 
 
   const [newItem, setNewItem] = useState<Partial<InventoryItem>>({
-    category: 'Otros',
+    category: 'PANTALONETAS',
     unit: 'unidades',
     status: 'disponible',
     lastUpdated: new Date().toISOString().split('T')[0],
@@ -217,6 +223,63 @@ export function AdminInventory() {
 
 
   // Cálculo de estadísticas avanzadas
+  const calculateInventoryEfficiency = () => {
+    if (inventory.length === 0) return 0
+    
+    let totalEfficiency = 0
+    let validItems = 0
+    
+    inventory.forEach(item => {
+      // Solo calcular eficiencia si tiene valores válidos de stock mínimo y máximo
+      if (item.minStock > 0 && item.maxStock > 0) {
+        const currentStock = item.currentStock
+        const minStock = item.minStock
+        const maxStock = item.maxStock
+        const optimalRange = maxStock - minStock
+        
+        if (optimalRange > 0) {
+          let efficiency = 0
+          
+          if (currentStock === 0) {
+            // Stock agotado: 0% de eficiencia
+            efficiency = 0
+          } else if (currentStock < minStock) {
+            // Stock bajo: eficiencia proporcional entre 0% y 50%
+            efficiency = (currentStock / minStock) * 50
+          } else if (currentStock >= minStock && currentStock <= maxStock) {
+            // Stock óptimo: eficiencia entre 50% y 100%
+            // Stock en el mínimo = 50%, stock en el máximo = 100%
+            const excessOverMin = currentStock - minStock
+            efficiency = 50 + (excessOverMin / optimalRange) * 50
+          } else {
+            // Stock excesivo: penalizar, pero no tanto como stock bajo
+            // Máximo 100% si está ligeramente por encima, decrece gradualmente
+            const excessOverMax = currentStock - maxStock
+            const excessRatio = excessOverMax / maxStock
+            // Si excede más del 50% del máximo, empezar a penalizar más
+            if (excessRatio <= 0.5) {
+              efficiency = 100 - (excessRatio * 20) // Máximo 10% de penalización
+            } else {
+              efficiency = 90 - ((excessRatio - 0.5) * 40) // Penalización más fuerte
+              efficiency = Math.max(0, efficiency) // No menos de 0%
+            }
+          }
+          
+          totalEfficiency += efficiency
+          validItems++
+        }
+      }
+    })
+    
+    // Si no hay items válidos, calcular eficiencia simple basada en disponibilidad
+    if (validItems === 0) {
+      const itemsWithStock = inventory.filter(item => item.currentStock > 0).length
+      return inventory.length > 0 ? (itemsWithStock / inventory.length) * 100 : 0
+    }
+    
+    return totalEfficiency / validItems
+  }
+
   const inventoryStats: InventoryStats = {
     totalItems: inventory.length,
     totalValue: inventory.reduce((sum, item) => sum + (item.currentStock * item.price), 0),
@@ -224,8 +287,8 @@ export function AdminInventory() {
     lowStockItems: inventory.filter(item => item.status === 'bajo').length,
     outOfStockItems: inventory.filter(item => item.status === 'agotado').length,
     expiringItems: inventory.filter(item => item.status === 'bajo').length,
-    avgTurnover: inventory.reduce((sum, item) => sum + item.avgConsumption, 0) / inventory.length,
-    inventoryEfficiency: inventory.filter(item => item.currentStock > 0).length / inventory.length * 100,
+    avgTurnover: inventory.length > 0 ? inventory.reduce((sum, item) => sum + item.avgConsumption, 0) / inventory.length : 0,
+    inventoryEfficiency: calculateInventoryEfficiency(),
     wasteValue: 0, // TODO: Calcular desde pérdidas reales si se implementa
     itemsByCategory: inventory.reduce((acc, item) => {
       acc[item.category] = (acc[item.category] || 0) + 1
@@ -242,25 +305,25 @@ export function AdminInventory() {
   }
 
   const categoryColors = {
-    'Camisetas': '#3b82f6',
-    'Pantalones': '#8b5cf6',
-    'Zapatos': '#f59e0b',
-    'Accesorios': '#10b981',
-    'Chaquetas': '#ef4444',
-    'Vestidos': '#ec4899',
-    'Ropa Interior': '#06b6d4',
-    'Otros': '#6b7280'
+    'PANTALONETAS': '#3b82f6',
+    'CAMISETAS': '#8b5cf6',
+    'SUDADERAS': '#f59e0b',
+    'BUZOS': '#10b981',
+    'SHORT': '#ef4444',
+    'TOP': '#ec4899',
+    'LYCRA': '#06b6d4',
+    'FALDA': '#6b7280'
   }
 
   const categoryNames = {
-    'Camisetas': 'Camisetas',
-    'Pantalones': 'Pantalones',
-    'Zapatos': 'Zapatos',
-    'Accesorios': 'Accesorios',
-    'Chaquetas': 'Chaquetas',
-    'Vestidos': 'Vestidos',
-    'Ropa Interior': 'Ropa Interior',
-    'Otros': 'Otros'
+    'PANTALONETAS': 'PANTALONETAS',
+    'CAMISETAS': 'CAMISETAS',
+    'SUDADERAS': 'SUDADERAS',
+    'BUZOS': 'BUZOS',
+    'SHORT': 'SHORT',
+    'TOP': 'TOP',
+    'LYCRA': 'LYCRA',
+    'FALDA': 'FALDA'
   }
 
   // Datos para gráficos
@@ -299,7 +362,7 @@ export function AdminInventory() {
         const payload = {
           name: newItem.name,
           sku: sku,
-          category: newItem.category || 'Otros',
+          category: newItem.category || 'PANTALONETAS',
           brand: newItem.supplier || null,
           color: 'N/A', // TODO: Agregar campo de color en el formulario
           size: 'N/A', // TODO: Agregar campo de tamaño en el formulario
@@ -327,7 +390,7 @@ export function AdminInventory() {
         // Recargar inventario
         await loadInventory()
         setNewItem({
-          category: 'Otros',
+          category: 'PANTALONETAS',
           unit: 'unidades',
           status: 'disponible',
           lastUpdated: new Date().toISOString().split('T')[0],
@@ -367,7 +430,7 @@ export function AdminInventory() {
   }
 
 
-  // Filtrar items
+  // Filtrar y ordenar items
   const filteredInventory = inventory.filter(item => {
     const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          item.supplier.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -377,7 +440,44 @@ export function AdminInventory() {
     const matchesStatus = filterStatus === 'all' || item.status === filterStatus
     
     return matchesSearch && matchesCategory && matchesStatus
+  }).sort((a, b) => {
+    const dir = sortDir === 'asc' ? 1 : -1
+    let av: any, bv: any
+    
+    if (sortBy === 'name') {
+      av = a.name
+      bv = b.name
+    } else if (sortBy === 'sku') {
+      av = a.sku
+      bv = b.sku
+    } else if (sortBy === 'category') {
+      av = a.category
+      bv = b.category
+    } else if (sortBy === 'currentStock') {
+      av = a.currentStock
+      bv = b.currentStock
+    } else if (sortBy === 'price') {
+      av = a.price
+      bv = b.price
+    }
+    
+    if (typeof av === 'number' && typeof bv === 'number') {
+      return (av - bv) * dir
+    }
+    return String(av).localeCompare(String(bv)) * dir
   })
+
+  const totalPages = Math.max(1, Math.ceil(filteredInventory.length / pageSize))
+  const pageData = filteredInventory.slice((page - 1) * pageSize, page * pageSize)
+
+  function toggleSort(key: 'name' | 'sku' | 'category' | 'currentStock' | 'price') {
+    if (sortBy === key) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortBy(key)
+      setSortDir('asc')
+    }
+  }
 
   return (
     <div 
@@ -396,30 +496,24 @@ export function AdminInventory() {
         </div>
 
         {/* Tab Navigation */}
-        <div className="mb-6">
-          <div className="flex justify-center">
-            <nav className="bg-white rounded-[12px] shadow-sm flex px-1 py-1 gap-1">
-              {[
-                { id: 'analytics', label: 'Analytics', icon: <TrendingUpIcon size={16} /> },
-                { id: 'inventory', label: 'Inventario', icon: <ShoppingCartIcon size={16} /> },
-                { id: 'alerts', label: 'Alertas', icon: <BellIcon size={16} /> }
-              ].map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveView(tab.id as any)}
-                  className={`px-3 py-2 rounded-[8px] font-semibold text-sm transition-all duration-200 flex items-center gap-2
-                    ${activeView === tab.id
-                      ? 'bg-blue-50 text-blue-700 shadow-sm'
-                      : 'bg-transparent text-gray-500 hover:bg-gray-50 hover:text-gray-700'}
-                  `}
-                  style={{ minWidth: 90 }}
-                >
-                  {tab.icon}
-                  {tab.label}
-                </button>
-              ))}
-            </nav>
-          </div>
+        <div className="mb-4 flex flex-wrap gap-2 justify-center">
+          {[
+            { id: 'analytics', label: 'Analytics', icon: <TrendingUpIcon size={16} /> },
+            { id: 'inventory', label: 'Inventario', icon: <ShoppingCartIcon size={16} /> }
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveView(tab.id as any)}
+              className={`px-3 py-1.5 rounded-lg text-xs lg:text-sm font-medium transition-all duration-200 flex items-center gap-2 ${
+                activeView === tab.id
+                  ? 'bg-gray-900 text-white shadow-md'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              {tab.icon}
+              {tab.label}
+            </button>
+          ))}
         </div>
 
         {/* Analytics View */}
@@ -453,23 +547,13 @@ export function AdminInventory() {
                   {/* Valor Total Inventario */}
                   <div className="w-full lg:w-64">
                     <SpotlightCard spotlightColor="rgba(0, 0, 0, 0.08)">
-                      <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-between config-font-medium metallic-bg" style={{ animationDelay: '0ms', boxShadow: '0 4px 16px 0 rgba(16,185,129,0.15)' }}>
+                      <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-center config-font-medium metallic-bg" style={{ animationDelay: '0ms', boxShadow: '0 4px 16px 0 rgba(16,185,129,0.15)' }}>
                         <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                        <div className="flex flex-col justify-between h-full relative z-10">
+                        <div className="flex flex-col justify-center h-full relative z-10">
                           <div className="flex flex-col items-center justify-center pt-1 pb-2">
                             <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">Valor Total</h3>
                             <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{formatCurrency(inventoryStats.totalValue)}</p>
                             <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">En inventario</p>
-                          </div>
-                          <div className="w-full px-2 h-10 xl:h-12 flex items-end">
-                            <ResponsiveContainer width="100%" height={48}>
-                              <LineChart data={chartDataValue.map((d, i) => ({ ...d, label: daysLabels[i] }))} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
-                                <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
-                                <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                                <YAxis hide />
-                                <Line type="monotone" dataKey="v" stroke="#10b981" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
-                              </LineChart>
-                            </ResponsiveContainer>
                           </div>
                     </div>
                   </div>
@@ -479,24 +563,14 @@ export function AdminInventory() {
                   {/* Eficiencia de Inventario */}
                   <div className="w-full lg:w-64">
                     <SpotlightCard spotlightColor="rgba(0, 0, 0, 0.08)">
-                      <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-between config-font-medium metallic-bg" style={{ animationDelay: '100ms', boxShadow: '0 4px 16px 0 rgba(59,130,246,0.15)' }}>
+                      <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-center config-font-medium metallic-bg" style={{ animationDelay: '100ms', boxShadow: '0 4px 16px 0 rgba(59,130,246,0.15)' }}>
                         <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                        <div className="flex flex-col justify-between h-full relative z-10">
+                        <div className="flex flex-col justify-center h-full relative z-10">
                           <div className="flex flex-col items-center justify-center pt-1 pb-2">
                             <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">Eficiencia</h3>
                             <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{inventoryStats.inventoryEfficiency.toFixed(0)}%</p>
-                            <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">Stock disponible</p>
+                            <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">Stock óptimo</p>
                       </div>
-                          <div className="w-full px-2 h-10 xl:h-12 flex items-end">
-                            <ResponsiveContainer width="100%" height={48}>
-                              <LineChart data={chartDataEfficiency.map((d, i) => ({ ...d, label: daysLabels[i] }))} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
-                                <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
-                                <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                                <YAxis hide />
-                                <Line type="monotone" dataKey="v" stroke="#3b82f6" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
-                              </LineChart>
-                            </ResponsiveContainer>
-                          </div>
                     </div>
                   </div>
                 </SpotlightCard>
@@ -505,24 +579,14 @@ export function AdminInventory() {
                   {/* Rotación Promedio */}
                   <div className="w-full lg:w-64">
                     <SpotlightCard spotlightColor="rgba(0, 0, 0, 0.08)">
-                      <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-between config-font-medium metallic-bg" style={{ animationDelay: '200ms', boxShadow: '0 4px 16px 0 rgba(251,146,60,0.15)' }}>
+                      <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-center config-font-medium metallic-bg" style={{ animationDelay: '200ms', boxShadow: '0 4px 16px 0 rgba(251,146,60,0.15)' }}>
                         <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                        <div className="flex flex-col justify-between h-full relative z-10">
+                        <div className="flex flex-col justify-center h-full relative z-10">
                           <div className="flex flex-col items-center justify-center pt-1 pb-2">
                             <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">Ventas Promedio</h3>
                             <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{inventoryStats.avgTurnover.toFixed(1)}</p>
                             <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">Unidades/semana</p>
                       </div>
-                          <div className="w-full px-2 h-10 xl:h-12 flex items-end">
-                            <ResponsiveContainer width="100%" height={48}>
-                              <LineChart data={chartDataTurnover.map((d, i) => ({ ...d, label: daysLabels[i] }))} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
-                                <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
-                                <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                                <YAxis hide />
-                                <Line type="monotone" dataKey="v" stroke="#fb923c" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
-                              </LineChart>
-                            </ResponsiveContainer>
-                          </div>
                     </div>
                   </div>
                 </SpotlightCard>
@@ -531,24 +595,14 @@ export function AdminInventory() {
                   {/* Coste Total */}
                   <div className="w-full lg:w-64">
                     <SpotlightCard spotlightColor="rgba(0, 0, 0, 0.08)">
-                      <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-between config-font-medium metallic-bg" style={{ animationDelay: '300ms', boxShadow: '0 4px 16px 0 rgba(239,68,68,0.15)' }}>
+                      <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-center config-font-medium metallic-bg" style={{ animationDelay: '300ms', boxShadow: '0 4px 16px 0 rgba(239,68,68,0.15)' }}>
                         <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                        <div className="flex flex-col justify-between h-full relative z-10">
+                        <div className="flex flex-col justify-center h-full relative z-10">
                           <div className="flex flex-col items-center justify-center pt-1 pb-2">
                             <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">Coste Total</h3>
                             <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{formatCurrency(inventoryStats.totalCost)}</p>
                             <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">Inversión actual</p>
                       </div>
-                          <div className="w-full px-2 h-10 xl:h-12 flex items-end">
-                            <ResponsiveContainer width="100%" height={48}>
-                              <LineChart data={chartDataCost.map((d, i) => ({ ...d, label: daysLabels[i] }))} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
-                                <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
-                                <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                                <YAxis hide />
-                                <Line type="monotone" dataKey="v" stroke="#ef4444" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
-                              </LineChart>
-                            </ResponsiveContainer>
-                          </div>
                     </div>
                   </div>
                 </SpotlightCard>
@@ -666,6 +720,478 @@ export function AdminInventory() {
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
+
+                {/* Análisis por Categoría */}
+                <div className="mb-8">
+                  <h4 className="text-sm font-semibold text-gray-800 mb-4">Análisis Detallado por Categoría</h4>
+                  <div className="space-y-6">
+                    {Object.entries(inventoryStats.itemsByCategory).map(([cat, itemCount]) => {
+                      const categoryItems = inventory.filter(item => item.category === cat)
+                      const categoryStock = inventoryStats.stockByCategory[cat] || 0
+                      const categoryValue = inventoryStats.valueByCategory[cat] || 0
+                      const categoryCost = categoryItems.reduce((sum, item) => sum + (item.currentStock * (item.cost || 0)), 0)
+                      const categoryMargin = categoryValue > 0 ? ((categoryValue - categoryCost) / categoryValue) * 100 : 0
+                      const lowStockCount = categoryItems.filter(item => item.status === 'bajo').length
+                      const outOfStockCount = categoryItems.filter(item => item.status === 'agotado').length
+                      const avgConsumption = categoryItems.length > 0 
+                        ? categoryItems.reduce((sum, item) => sum + item.avgConsumption, 0) / categoryItems.length 
+                        : 0
+
+                      // Función para extraer el nombre base del producto (sin talla)
+                      const getBaseProductName = (name: string): string => {
+                        let baseName = name.trim()
+                        
+                        // Remover información de talla común en el nombre
+                        // Patrones específicos para tallas (más conservador)
+                        const sizePatterns = [
+                          /\s*(Talla|T|Size|Tamaño)\s*[:\-]?\s*[SMLXL\d]+\s*$/i, // "Talla M", "T M", "Size L"
+                          /\s*-\s*(Talla|T|Size|Tamaño)\s*[:\-]?\s*[SMLXL\d]+\s*$/i, // "- Talla M"
+                          /\s*[:\-]\s*[SMLXL\d]+\s*$/i, // "- M", ": L"
+                          /\s*\([SMLXL\d]+\)\s*$/i, // "(M)", "(L)"
+                          /\s*\[[SMLXL\d]+\]\s*$/i, // "[M]", "[L]"
+                        ]
+                        
+                        // Aplicar cada patrón
+                        for (const pattern of sizePatterns) {
+                          const before = baseName
+                          baseName = baseName.replace(pattern, '').trim()
+                          // Si se eliminó algo, salir del bucle para evitar eliminaciones múltiples
+                          if (before !== baseName) break
+                        }
+                        
+                        // Si el nombre termina con puntos suspensivos seguidos de espacio y posible talla, removerlos
+                        baseName = baseName.replace(/\.\.\.\s*[SMLXL\d\s]*$/i, '').trim()
+                        
+                        // Remover espacios múltiples y limpiar
+                        baseName = baseName.replace(/\s+/g, ' ').trim()
+                        
+                        // Si después de todo el procesamiento el nombre está vacío, usar el original
+                        return baseName || name
+                      }
+
+                      // Agrupar productos por nombre base (sin talla)
+                      const productsByName = new Map<string, {
+                        name: string
+                        value: number
+                        stock: number
+                        price: number
+                        sku: string[]
+                      }>()
+
+                      categoryItems.forEach(item => {
+                        const baseName = getBaseProductName(item.name)
+                        const existing = productsByName.get(baseName)
+                        
+                        if (existing) {
+                          existing.value += item.currentStock * item.price
+                          existing.stock += item.currentStock
+                          existing.sku.push(item.sku)
+                        } else {
+                          productsByName.set(baseName, {
+                            name: baseName,
+                            value: item.currentStock * item.price,
+                            stock: item.currentStock,
+                            price: item.price, // Precio promedio, se puede mejorar
+                            sku: [item.sku]
+                          })
+                        }
+                      })
+
+                      // Convertir a array y ordenar por valor
+                      const sortedByValue = Array.from(productsByName.values())
+                        .sort((a, b) => b.value - a.value)
+
+                      // Colores para el gráfico de pie (paleta más amplia)
+                      const pieColors = [
+                        '#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#ef4444', 
+                        '#ec4899', '#06b6d4', '#6b7280', '#84cc16', '#f97316',
+                        '#6366f1', '#14b8a6', '#f43f5e', '#a855f7', '#0ea5e9'
+                      ]
+
+                      // Mostrar todos los productos individualmente (sin agrupar en "Otros")
+                      const totalValue = sortedByValue.reduce((sum, item) => sum + item.value, 0)
+
+                      const pieData = sortedByValue.map(item => ({
+                        name: item.name,
+                        value: item.value,
+                        fullName: item.name,
+                        sku: item.sku.join(', ')
+                      }))
+
+                      // Para el gráfico de barras, agrupar por producto base + color
+                      // Primero obtener los top 10 productos base por valor total
+                      const topBarProducts = sortedByValue.slice(0, 10)
+                      const topBaseNames = new Set(topBarProducts.map(p => p.name))
+                      
+                      // Agrupar items por producto base + color
+                      const itemsByProductAndColor = new Map<string, InventoryItem[]>()
+                      categoryItems.forEach(item => {
+                        const baseName = getBaseProductName(item.name)
+                        if (topBaseNames.has(baseName)) {
+                          // Crear clave compuesta: producto + color
+                          const key = `${baseName}|||${item.color || 'Sin color'}`
+                          if (!itemsByProductAndColor.has(key)) {
+                            itemsByProductAndColor.set(key, [])
+                          }
+                          itemsByProductAndColor.get(key)!.push(item)
+                        }
+                      })
+                      
+                      // Crear mapa de colores por combinación producto+color
+                      const variantColorMap = new Map<string, string>()
+                      let colorIndex = 0
+                      
+                      // Ordenar las variantes para asignar colores consistentes
+                      const sortedVariants = Array.from(itemsByProductAndColor.keys()).sort()
+                      sortedVariants.forEach(key => {
+                        if (!variantColorMap.has(key)) {
+                          variantColorMap.set(key, pieColors[colorIndex % pieColors.length])
+                          colorIndex++
+                        }
+                      })
+                      
+                      // Crear datos para el gráfico de barras con todas las tallas
+                      const barData: Array<{
+                        name: string
+                        stock: number
+                        value: number
+                        fullName: string
+                        subcategory: string
+                        color: string
+                        sku: string
+                        size: string
+                        productName: string
+                        variantKey: string
+                        productColor: string
+                      }> = []
+                      
+                      // Ordenar por producto base (para agrupar visualmente) y luego por color y talla
+                      Array.from(itemsByProductAndColor.entries())
+                        .sort((a, b) => {
+                          const [aProduct, aColor] = a[0].split('|||')
+                          const [bProduct, bColor] = b[0].split('|||')
+                          
+                          // Primero ordenar por producto base
+                          const aProductIndex = topBarProducts.findIndex(p => p.name === aProduct)
+                          const bProductIndex = topBarProducts.findIndex(p => p.name === bProduct)
+                          
+                          if (aProductIndex !== bProductIndex) {
+                            return aProductIndex - bProductIndex
+                          }
+                          
+                          // Si es el mismo producto, ordenar por color
+                          return aColor.localeCompare(bColor)
+                        })
+                        .forEach(([variantKey, items]) => {
+                          const [baseName, productColor] = variantKey.split('|||')
+                          
+                          // Ordenar items por talla
+                          const sortedItems = items.sort((a, b) => {
+                            // Ordenar tallas: S, M, L, XL, XXL, etc.
+                            const sizeOrder = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL']
+                            const aSize = a.size.toUpperCase()
+                            const bSize = b.size.toUpperCase()
+                            const aIndex = sizeOrder.indexOf(aSize) !== -1 ? sizeOrder.indexOf(aSize) : 999
+                            const bIndex = sizeOrder.indexOf(bSize) !== -1 ? sizeOrder.indexOf(bSize) : 999
+                            return aIndex - bIndex
+                          })
+                          
+                          sortedItems.forEach(item => {
+                            barData.push({
+                              name: item.size, // Mostrar solo la talla en el eje X
+                              stock: item.currentStock,
+                              value: item.currentStock * item.price,
+                              fullName: `${categoryNames[cat as keyof typeof categoryNames] || cat} - ${baseName} (Color: ${productColor}, Talla: ${item.size})`,
+                              subcategory: baseName,
+                              color: variantColorMap.get(variantKey) || '#6b7280',
+                              sku: item.sku,
+                              size: item.size,
+                              productName: baseName,
+                              variantKey: variantKey,
+                              productColor: productColor
+                            })
+                          })
+                        })
+
+                      return (
+                        <div 
+                          key={cat} 
+                          className="bg-white rounded-lg border border-gray-200 p-4 lg:p-6 hover:shadow-md transition-shadow"
+                        >
+                          {/* Header de la categoría */}
+                          <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-200">
+                            <span 
+                              className="w-4 h-4 rounded-full inline-block" 
+                              style={{ backgroundColor: categoryColors[cat as keyof typeof categoryColors] || '#6b7280' }}
+                            ></span>
+                            <h5 className="font-semibold text-gray-900 text-base">
+                              {categoryNames[cat as keyof typeof categoryNames] || cat}
+                            </h5>
+                          </div>
+
+                          {/* Métricas resumidas */}
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 text-xs">
+                            <div className="flex flex-col">
+                              <span className="text-gray-600 mb-1">Total productos</span>
+                              <span className="font-semibold text-gray-900">{itemCount}</span>
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-gray-600 mb-1">Stock total</span>
+                              <span className="font-semibold text-gray-900">{categoryStock} unidades</span>
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-gray-600 mb-1">Valor total</span>
+                              <span className="font-semibold text-green-700">{formatCurrency(categoryValue)}</span>
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-gray-600 mb-1">Margen promedio</span>
+                              <span className="font-semibold text-green-700">{categoryMargin.toFixed(1)}%</span>
+                            </div>
+                          </div>
+
+                          {/* Alertas */}
+                          {(lowStockCount > 0 || outOfStockCount > 0) && (
+                            <div className="flex flex-wrap gap-2 mb-4">
+                              {lowStockCount > 0 && (
+                                <span className="px-2 py-1 bg-yellow-100 text-yellow-700 rounded text-xs font-medium">
+                                  {lowStockCount} con stock bajo
+                                </span>
+                              )}
+                              {outOfStockCount > 0 && (
+                                <span className="px-2 py-1 bg-red-100 text-red-700 rounded text-xs font-medium">
+                                  {outOfStockCount} agotados
+                                </span>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Gráficos de productos individuales */}
+                          {categoryItems.length > 0 && (
+                            <div className="space-y-6 mt-6">
+                              {/* Gráfico de Pie - Distribución de Valor */}
+                              <div className="bg-gray-50 rounded-lg p-4">
+                                <div className="flex items-center justify-between mb-3">
+                                  <h6 className="text-sm font-semibold text-gray-800">
+                                    Distribución de Valor por Producto
+                                  </h6>
+                                  {pieData.length > 1 && (
+                                    <span className="text-xs text-gray-500">
+                                      {pieData.length} productos
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex flex-col lg:flex-row gap-4 items-center">
+                                  <div className="w-full lg:w-2/5 h-72 flex items-center justify-center">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                      <PieChart>
+                                        <Pie
+                                          data={pieData}
+                                          dataKey="value"
+                                          nameKey="name"
+                                          cx="50%"
+                                          cy="50%"
+                                          outerRadius={100}
+                                          innerRadius={40}
+                                          label={({ percent }) => percent > 0.05 ? `${(percent * 100).toFixed(0)}%` : ''}
+                                          labelLine={false}
+                                        >
+                                          {pieData.map((entry, index) => (
+                                            <Cell 
+                                              key={`cell-${index}`} 
+                                              fill={pieColors[index % pieColors.length]}
+                                              stroke="#fff"
+                                              strokeWidth={2}
+                                            />
+                                          ))}
+                                        </Pie>
+                                        <Tooltip 
+                                          formatter={(value: number) => formatCurrency(value)}
+                                          contentStyle={{ 
+                                            backgroundColor: 'white', 
+                                            border: '1px solid #e5e7eb',
+                                            borderRadius: '8px',
+                                            padding: '8px'
+                                          }}
+                                        />
+                                      </PieChart>
+                                    </ResponsiveContainer>
+                                  </div>
+                                  <div className="w-full lg:w-3/5">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-72 overflow-y-auto pr-2">
+                                      {pieData.map((item, index) => (
+                                        <div 
+                                          key={index}
+                                          className="flex items-center gap-2 p-2 bg-white rounded border border-gray-200 hover:shadow-sm transition-shadow"
+                                        >
+                                          <div 
+                                            className="w-4 h-4 rounded flex-shrink-0"
+                                            style={{ backgroundColor: pieColors[index % pieColors.length] }}
+                                          ></div>
+                                          <div className="flex-1 min-w-0">
+                                            <div className="text-xs font-medium text-gray-900 break-words" title={item.fullName}>
+                                              {item.name}
+                                            </div>
+                                            <div className="text-xs text-gray-600">
+                                              {formatCurrency(item.value)} • {((item.value / totalValue) * 100).toFixed(1)}%
+                                            </div>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Gráficos de Barras - Stock por Producto (Cuadrícula) */}
+                              <div className="bg-gray-50 rounded-lg p-4">
+                                <div className="flex items-center justify-between mb-4">
+                                  <h6 className="text-sm font-semibold text-gray-800">
+                                    {categoryNames[cat as keyof typeof categoryNames] || cat} - Stock por Talla por Producto
+                                  </h6>
+                                  {topBarProducts.length > 0 && (
+                                    <span className="text-xs text-gray-500">
+                                      {topBarProducts.length} productos
+                                    </span>
+                                  )}
+                                </div>
+                                
+                                {/* Cuadrícula de gráficos */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                  {topBarProducts.map((product, productIndex) => {
+                                    // Obtener datos solo para este producto
+                                    const productBarData = barData.filter(d => d.subcategory === product.name)
+                                    
+                                    // Obtener todas las variantes (producto + color) de este producto base
+                                    const variantsForProduct = Array.from(new Set(
+                                      productBarData.map(d => d.variantKey)
+                                    ))
+                                    
+                                    // Agrupar tallas por variante (color)
+                                    const variantsData = variantsForProduct.map(variantKey => {
+                                      const [baseName, productColor] = variantKey.split('|||')
+                                      const sizesForVariant = productBarData.filter(d => d.variantKey === variantKey)
+                                      const variantStock = sizesForVariant.reduce((sum, d) => sum + d.stock, 0)
+                                      const variantColor = variantColorMap.get(variantKey) || '#6b7280'
+                                      
+                                      return {
+                                        variantKey,
+                                        productColor,
+                                        sizes: sizesForVariant,
+                                        totalStock: variantStock,
+                                        color: variantColor
+                                      }
+                                    })
+                                    
+                                    const totalStock = variantsData.reduce((sum, v) => sum + v.totalStock, 0)
+                                    
+                                    return (
+                                      <div 
+                                        key={productIndex}
+                                        className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm hover:shadow-md transition-shadow"
+                                      >
+                                        {/* Título del producto */}
+                                        <div className="mb-2 pb-2 border-b border-gray-200">
+                                          <div className="font-semibold text-gray-900 text-xs block truncate" title={product.name}>
+                                            {product.name}
+                                          </div>
+                                          <span className="text-xs text-gray-500">{totalStock} unidades totales</span>
+                                        </div>
+                                        
+                                        {/* Gráfico pequeño */}
+                                        {productBarData.length > 0 && (
+                                          <div className="h-48 mb-3">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                              <BarChart 
+                                                data={productBarData}
+                                                margin={{ top: 5, right: 5, left: 0, bottom: 40 }}
+                                              >
+                                                <CartesianGrid strokeDasharray="3 3" stroke="#e0e7ef" strokeOpacity={0.3} />
+                                                <XAxis 
+                                                  dataKey="name" 
+                                                  angle={-45}
+                                                  textAnchor="end"
+                                                  height={50}
+                                                  tick={{ fontSize: 8, fill: '#64748b' }}
+                                                  interval={0}
+                                                />
+                                                <YAxis 
+                                                  tick={{ fontSize: 9, fill: '#64748b' }}
+                                                  width={30}
+                                                />
+                                                <Tooltip 
+                                                  formatter={(value: number) => [`${value} unidades`, 'Stock']}
+                                                  contentStyle={{ 
+                                                    backgroundColor: 'white', 
+                                                    border: '1px solid #e5e7eb',
+                                                    borderRadius: '6px',
+                                                    padding: '6px',
+                                                    fontSize: '11px'
+                                                  }}
+                                                  labelFormatter={(label, payload) => {
+                                                    if (payload && payload.length > 0) {
+                                                      const data = payload[0].payload
+                                                      return `${data.productColor} - Talla ${data.size}`
+                                                    }
+                                                    return label
+                                                  }}
+                                                />
+                                                <Bar 
+                                                  dataKey="stock" 
+                                                  radius={[3, 3, 0, 0]}
+                                                >
+                                                  {productBarData.map((entry, index) => (
+                                                    <Cell 
+                                                      key={`bar-cell-${productIndex}-${index}`}
+                                                      fill={entry.color}
+                                                    />
+                                                  ))}
+                                                </Bar>
+                                              </BarChart>
+                                            </ResponsiveContainer>
+                                          </div>
+                                        )}
+                                        
+                                        {/* Leyenda compacta */}
+                                        <div className="space-y-1">
+                                          {variantsData.map((variant, variantIndex) => (
+                                            <div key={variantIndex} className="flex items-center gap-2 text-xs">
+                                              <div 
+                                                className="w-2.5 h-2.5 rounded flex-shrink-0"
+                                                style={{ backgroundColor: variant.color }}
+                                              ></div>
+                                              <span className="text-gray-700 font-medium">{variant.productColor}</span>
+                                              <span className="text-gray-500">({variant.totalStock})</span>
+                                              <div className="flex flex-wrap gap-1 ml-auto">
+                                                {variant.sizes.map((sizeItem, sizeIndex) => (
+                                                  <span 
+                                                    key={sizeIndex}
+                                                    className="text-gray-600"
+                                                  >
+                                                    {sizeItem.size}:<span className="font-medium">{sizeItem.stock}</span>
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                                
+                                {sortedByValue.length > 10 && (
+                                  <div className="mt-4 text-xs text-gray-500 text-center">
+                                    <p>Las subcategorías restantes ({sortedByValue.length - 10}) tienen menor stock</p>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
               </div>
             </div>
           </>
@@ -675,7 +1201,7 @@ export function AdminInventory() {
         {activeView === 'inventory' && (
           <>
             {/* Filtros y Búsqueda */}
-            <div className="bg-white rounded-[8px] border border-gray-200 shadow-sm mb-6 p-4">
+            <div className="bg-white border border-gray-200 rounded-[16px] mb-6 p-4">
               <div className="flex flex-col md:flex-row gap-4">
                 <div className="flex-1">
                   <div className="relative">
@@ -684,7 +1210,7 @@ export function AdminInventory() {
                       type="text"
                       placeholder="Buscar por nombre, SKU, marca..."
                       value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
+                      onChange={(e) => { setSearchTerm(e.target.value); setPage(1) }}
                       className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-black"
                     />
                   </div>
@@ -692,7 +1218,7 @@ export function AdminInventory() {
                 <div className="flex gap-3">
                   <select
                     value={filterCategory}
-                    onChange={(e) => setFilterCategory(e.target.value)}
+                    onChange={(e) => { setFilterCategory(e.target.value); setPage(1) }}
                     className="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-black"
                   >
                     <option value="all">Todas las categorías</option>
@@ -702,7 +1228,7 @@ export function AdminInventory() {
                   </select>
                   <select
                     value={filterStatus}
-                    onChange={(e) => setFilterStatus(e.target.value)}
+                    onChange={(e) => { setFilterStatus(e.target.value); setPage(1) }}
                     className="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-black"
                   >
                     <option value="all">Todos los estados</option>
@@ -710,119 +1236,167 @@ export function AdminInventory() {
                     <option value="bajo">Stock Bajo</option>
                     <option value="agotado">Agotado</option>
                   </select>
-                  <button
-                    onClick={() => setIsAddItemOpen(true)}
-                    className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors duration-200 flex items-center text-sm whitespace-nowrap"
-                  >
-                    <PlusIcon size={16} className="mr-2" />
-                    Agregar Producto
-                  </button>
                 </div>
               </div>
             </div>
 
             {/* Lista de Inventario */}
-            <div className="bg-white rounded-[8px] border border-gray-200 shadow-sm">
-              <div className="p-4 border-b border-gray-100">
-                <h3 className="font-semibold text-gray-800 text-base">Inventario Actual</h3>
-                <p className="text-xs text-gray-500 mt-1">
-                  {filteredInventory.length} de {inventory.length} productos
-                </p>
+            <div className="bg-white border border-gray-200 rounded-[16px]">
+              <div className="p-2 sm:p-3 border-b border-gray-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                <div className="text-xs sm:text-sm text-gray-600">{filteredInventory.length} resultados • Página {page} de {totalPages}</div>
+                <div className="flex items-center gap-2 text-xs sm:text-sm">
+                  <span className="hidden sm:inline text-black">Filas:</span>
+                  <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(1) }} className="border rounded px-2 py-1 bg-white text-black text-xs sm:text-sm">
+                    {[10,20,50,100,200].map(n => <option key={n} value={n} className="text-black">{n}</option>)}
+                  </select>
+                </div>
               </div>
-              <div className="p-2">
-                <div className="grid grid-cols-1 gap-2">
-                  {filteredInventory.map((item) => {
-                    const stockPercentage = ((item.currentStock) / item.maxStock) * 100
-                    return (
-                      <div
-                        key={item.id}
-                        className={`bg-white border border-gray-100 rounded-[6px] px-3 py-2 shadow-none hover:shadow-sm transition-all duration-200 group flex flex-col gap-2 text-xs ${
-                          item.status === 'agotado' ? 'border-red-200 bg-red-50' :
-                          item.status === 'bajo' ? 'border-yellow-200 bg-yellow-50' :
-                          'border-gray-100'
-                        }`}
-                      >
-                        {/* Información principal */}
-                        <div className="flex items-center justify-between">
-                          <div className="flex-1 min-w-0">
-                            <div className="font-semibold text-gray-900 text-sm mb-1">{item.name}</div>
-                            <div className="flex flex-wrap items-center gap-1 text-[11px] text-gray-500">
-                              <span>{item.category}</span>
-                              <span>·</span>
-                              <span>SKU: {item.sku}</span>
-                              <span>·</span>
-                              <span>{item.color} / {item.size}</span>
-                              <span>·</span>
-                              <span>{item.supplier}</span>
-                              <span>·</span>
-                              <span className={`font-bold ${
-                                item.status === 'agotado' ? 'text-red-600' :
-                                item.status === 'bajo' ? 'text-yellow-600' :
-                                'text-green-600'
-                              }`}>
-                                {item.status}
-                              </span>
-                              {item.expirationDate && (
-                                <>
-                                  <span>·</span>
-                                  <span className="text-orange-600">
-                                    Vence: {new Date(item.expirationDate).toLocaleDateString()}
-                                  </span>
-                                </>
-                              )}
-                          </div>
-                        </div>
-                          <button
-                            onClick={() => handleDeleteItem(item.id)}
-                            className="flex items-center justify-center w-7 h-7 rounded border border-gray-200 bg-white text-red-400 hover:text-red-600 hover:bg-red-50 transition-all duration-200 shadow-none"
-                            title="Eliminar"
-                          >
-                            <TrashIcon size={13} />
-                          </button>
-                        </div>
-
-                        {/* Progress Bar */}
-                        <div className="mb-2">
-                          <div className="flex justify-between text-xs mb-1">
-                            <span className="text-gray-600">Stock {stockPercentage.toFixed(1)}%</span>
-                            <span className="text-gray-600">
-                              Ventas: {item.avgConsumption} {item.unit}/sem
+              {/* Desktop Table View */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-center text-gray-600">
+                      <th className="py-2 px-3">🖼️</th>
+                      <th className="py-2 px-3 cursor-pointer" onClick={() => toggleSort('name')}>Nombre</th>
+                      <th className="py-2 px-3">SKU</th>
+                      <th className="py-2 px-3">Categoría</th>
+                      <th className="py-2 px-3">Color</th>
+                      <th className="py-2 px-3">Talla</th>
+                      <th className="py-2 px-3 cursor-pointer" onClick={() => toggleSort('currentStock')}>Stock</th>
+                      <th className="py-2 px-3 cursor-pointer" onClick={() => toggleSort('price')}>Precio</th>
+                      <th className="py-2 px-3">Estado</th>
+                      <th className="py-2 px-3">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageData.map(item => {
+                      const level = item.currentStock === 0 ? 'out' : (item.currentStock <= item.minStock ? 'low' : 'normal')
+                      return (
+                        <tr key={item.id} className="border-t border-gray-100">
+                          <td className="py-2 px-3 text-center">
+                            {item.imageUrl ? (
+                              <img src={item.imageUrl} alt={item.name} className="w-10 h-10 rounded object-cover border border-gray-200 mx-auto" />
+                            ) : (
+                              <div className="w-10 h-10 bg-gray-100 rounded border border-gray-200 mx-auto" />
+                            )}
+                          </td>
+                          <td className="py-2 px-3 text-gray-900 font-medium text-center">
+                            <div className="flex items-center justify-center gap-2">
+                              {level !== 'normal' && <span title={level === 'low' ? 'Bajo stock' : 'Agotado'}>{level === 'low' ? '⚠️' : '❌'}</span>}
+                              {item.name}
+                            </div>
+                          </td>
+                          <td className="py-2 px-3 text-gray-600 text-center">{item.sku}</td>
+                          <td className="py-2 px-3 text-gray-600 text-center">{item.category}</td>
+                          <td className="py-2 px-3 text-gray-600 text-center">{item.color}</td>
+                          <td className="py-2 px-3 text-gray-600 text-center">{item.size}</td>
+                          <td className={`py-2 px-3 font-semibold text-center ${
+                            level === 'low' ? 'text-orange-600' : 
+                            level === 'out' ? 'text-red-600' : 
+                            'text-black'
+                          }`}>{item.currentStock}</td>
+                          <td className="py-2 px-3 text-black text-center">{formatPrice(Number(item.price))}</td>
+                          <td className="py-2 px-3 text-center">
+                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                              item.status === 'disponible' ? 'bg-green-50 text-green-700 border border-green-200' : 
+                              item.status === 'bajo' ? 'bg-yellow-50 text-yellow-700 border border-yellow-200' : 
+                              'bg-red-50 text-red-700 border border-red-200'
+                            }`}>
+                              {item.status === 'disponible' ? 'Disponible' : item.status === 'bajo' ? 'Bajo stock' : 'Agotado'}
                             </span>
+                          </td>
+                          <td className="py-2 px-3 text-center">
+                            <div className="flex items-center justify-center gap-2">
+                              <button onClick={() => handleDeleteItem(item.id)} className="px-2 py-1 border rounded text-red-600 hover:bg-red-50 flex items-center gap-1"><TrashIcon size={14} /> Eliminar</button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                    {pageData.length === 0 && (
+                      <tr>
+                        <td className="py-8 text-center text-gray-500" colSpan={10}>Sin resultados</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              {/* Mobile Card View */}
+              <div className="md:hidden p-3 space-y-3">
+                {pageData.length > 0 ? (
+                  pageData.map(item => {
+                    const level = item.currentStock === 0 ? 'out' : (item.currentStock <= item.minStock ? 'low' : 'normal')
+                    return (
+                      <div key={item.id} className="border border-gray-200 rounded-lg p-3 space-y-2">
+                        <div className="flex items-start gap-3">
+                          {/* Imagen */}
+                          <div className="flex-shrink-0">
+                            {item.imageUrl ? (
+                              <img src={item.imageUrl} alt={item.name} className="w-16 h-16 rounded object-cover border border-gray-200" />
+                            ) : (
+                              <div className="w-16 h-16 bg-gray-100 rounded border border-gray-200" />
+                            )}
                           </div>
-                          <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
-                            <div 
-                              className={`h-1.5 rounded-full transition-all duration-500 ${
-                                item.status === 'agotado' ? 'bg-red-500' :
-                                item.status === 'bajo' ? 'bg-yellow-500' :
-                                'bg-green-500'
-                              }`}
-                              style={{ width: `${Math.min(stockPercentage, 100)}%` }}
-                            ></div>
+                          {/* Info principal */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start gap-2 mb-1">
+                              {level !== 'normal' && <span title={level === 'low' ? 'Bajo stock' : 'Agotado'} className="text-lg flex-shrink-0">{level === 'low' ? '⚠️' : '❌'}</span>}
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-semibold text-gray-900 truncate">{item.name}</p>
+                                <p className="text-xs text-gray-600 mt-0.5">SKU: {item.sku}</p>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 mt-2 text-xs">
+                              <div>
+                                <span className="text-gray-600">Categoría: </span>
+                                <span className="text-gray-800">{item.category}</span>
+                              </div>
+                              <div>
+                                <span className="text-gray-600">Color: </span>
+                                <span className="text-gray-800">{item.color}</span>
+                              </div>
+                              <div>
+                                <span className="text-gray-600">Talla: </span>
+                                <span className="text-gray-800">{item.size}</span>
+                              </div>
+                              <div>
+                                <span className="text-gray-600">Stock: </span>
+                                <span className={`font-semibold ${level === 'low' ? 'text-orange-600' : level === 'out' ? 'text-red-600' : 'text-black'}`}>{item.currentStock}</span>
+                              </div>
+                            </div>
                           </div>
                         </div>
-
-                        {/* Detalles del producto */}
-                        <div className="grid grid-cols-4 gap-2">
-                          <div className="text-center p-2 bg-blue-50 rounded border border-blue-200">
-                            <p className="text-xs font-bold text-blue-700">{item.currentStock} {item.unit}</p>
-                            <p className="text-[10px] text-blue-600">Stock</p>
-                      </div>
-                          <div className="text-center p-2 bg-green-50 rounded border border-green-200">
-                            <p className="text-xs font-bold text-green-700">{formatCurrency(item.price)}</p>
-                            <p className="text-[10px] text-green-600">P. Venta</p>
+                        <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+                          <div>
+                            <span className="text-xs text-gray-600">Precio: </span>
+                            <span className="text-sm font-semibold text-black">{formatPrice(Number(item.price))}</span>
                           </div>
-                          <div className="text-center p-2 bg-gray-50 rounded border border-gray-200">
-                            <p className="text-xs font-bold text-gray-700">{formatCurrency(item.cost || 0)}</p>
-                            <p className="text-[10px] text-gray-600">Coste</p>
-                          </div>
-                          <div className="text-center p-2 bg-purple-50 rounded border border-purple-200">
-                            <p className="text-xs font-bold text-purple-700">{formatCurrency(item.currentStock * item.price)}</p>
-                            <p className="text-[10px] text-purple-600">Valor</p>
-                          </div>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${
+                            item.status === 'disponible' ? 'bg-green-50 text-green-700 border border-green-200' : 
+                            item.status === 'bajo' ? 'bg-yellow-50 text-yellow-700 border border-yellow-200' : 
+                            'bg-red-50 text-red-700 border border-red-200'
+                          }`}>
+                            {item.status === 'disponible' ? 'Disponible' : item.status === 'bajo' ? 'Bajo stock' : 'Agotado'}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 pt-2 border-t border-gray-100">
+                          <button onClick={() => handleDeleteItem(item.id)} className="flex-1 px-2 py-1.5 border rounded text-red-600 hover:bg-red-50 text-xs flex items-center justify-center gap-1">
+                            <TrashIcon size={12} /> Eliminar
+                          </button>
                         </div>
                       </div>
                     )
-                  })}
+                  })
+                ) : (
+                  <div className="text-center py-8 text-gray-500 text-sm">Sin resultados</div>
+                )}
+              </div>
+              <div className="p-2 sm:p-3 border-t border-gray-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs sm:text-sm">
+                <div className="text-gray-600">Mostrando {(page-1)*pageSize + 1}-{Math.min(page*pageSize, filteredInventory.length)} de {filteredInventory.length}</div>
+                <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
+                  <button disabled={page<=1} onClick={() => setPage(p => Math.max(1, p-1))} className="px-3 py-1.5 border rounded disabled:opacity-50 text-xs sm:text-sm text-black">Anterior</button>
+                  <span className="text-xs sm:text-sm text-black">Página {page} / {totalPages}</span>
+                  <button disabled={page>=totalPages} onClick={() => setPage(p => Math.min(totalPages, p+1))} className="px-3 py-1.5 border rounded disabled:opacity-50 text-xs sm:text-sm text-black">Siguiente</button>
                 </div>
               </div>
             </div>
@@ -833,7 +1407,7 @@ export function AdminInventory() {
         {activeView === 'alerts' && (
           <div className="space-y-6">
             {/* Low Stock Alerts */}
-            <div className="bg-white rounded-[8px] border border-gray-200 shadow-sm">
+            <div className="bg-white border border-gray-200 rounded-[16px]">
               <div className="p-4 border-b border-gray-100">
                 <h3 className="font-semibold text-gray-800">Alertas de Stock Bajo</h3>
                 <p className="text-xs text-gray-600 mt-1">Productos que necesitan reposición</p>

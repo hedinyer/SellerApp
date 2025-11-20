@@ -801,12 +801,14 @@ input,
 textarea,
 [contenteditable="true"] {
   /* Forzar que los elementos sean interactivos */
-  -webkit-user-select: text;
-  user-select: text;
+  -webkit-user-select: text !important;
+  user-select: text !important;
   /* Asegurar que el cursor se muestre correctamente */
   cursor: text;
   /* Mejorar el manejo de focus */
   outline-offset: 2px;
+  /* Asegurar eventos de puntero */
+  pointer-events: auto !important;
 }
 
 /* Asegurar que los inputs tengan el comportamiento correcto al hacer focus */
@@ -860,6 +862,6 @@ body {
 body input,
 body textarea,
 body [contenteditable="true"] {
-  -webkit-user-select: text;
-  user-select: text;
+  -webkit-user-select: text !important;
+  user-select: text !important;
 } 

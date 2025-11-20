@@ -25,6 +25,9 @@ interface SolicitudReposicion {
   notas: string | null
   created_at: string
   updated_at: string
+  image_url?: string
+  color?: string
+  size?: string
 }
 
 export function AdminReposition() {
@@ -42,18 +45,66 @@ export function AdminReposition() {
   async function loadSolicitudes() {
     try {
       setIsLoading(true)
-      const { data, error } = await supabase
+      // Obtener solicitudes con información del producto
+      const { data: solicitudesData, error: solicitudesError } = await supabase
         .from('solicitudes_reposicion')
         .select('*')
         .order('created_at', { ascending: false })
 
-      if (error) {
-        console.error('Error cargando solicitudes:', error)
+      if (solicitudesError) {
+        console.error('Error cargando solicitudes:', solicitudesError)
         return
       }
 
-      if (data) {
-        setSolicitudes(data as SolicitudReposicion[])
+      if (solicitudesData && solicitudesData.length > 0) {
+        // Obtener todos los garment_ids únicos
+        const garmentIds = [...new Set(solicitudesData.map(s => s.garment_id).filter(Boolean))]
+        const skus = [...new Set(solicitudesData.map(s => s.sku).filter(Boolean))]
+        
+        // Obtener todos los productos de una vez usando múltiples consultas si es necesario
+        let garmentsData: any[] = []
+        
+        if (garmentIds.length > 0) {
+          const { data: dataById } = await supabase
+            .from('garments')
+            .select('id, sku, image_url, color, size')
+            .in('id', garmentIds)
+          if (dataById) garmentsData.push(...dataById)
+        }
+        
+        if (skus.length > 0) {
+          const { data: dataBySku } = await supabase
+            .from('garments')
+            .select('id, sku, image_url, color, size')
+            .in('sku', skus)
+          if (dataBySku) {
+            // Evitar duplicados
+            const existingIds = new Set(garmentsData.map(g => g.id))
+            garmentsData.push(...dataBySku.filter(g => !existingIds.has(g.id)))
+          }
+        }
+
+        // Crear un mapa para búsqueda rápida
+        const garmentsMap = new Map<string, { image_url?: string, color?: string, size?: string }>()
+        garmentsData.forEach(garment => {
+          if (garment.id) garmentsMap.set(garment.id, { image_url: garment.image_url || undefined, color: garment.color || undefined, size: garment.size || undefined })
+          if (garment.sku) garmentsMap.set(garment.sku, { image_url: garment.image_url || undefined, color: garment.color || undefined, size: garment.size || undefined })
+        })
+
+        // Combinar solicitudes con información del producto
+        const solicitudesConProducto = solicitudesData.map((solicitud) => {
+          const garmentInfo = garmentsMap.get(solicitud.garment_id) || garmentsMap.get(solicitud.sku)
+          return {
+            ...solicitud,
+            image_url: garmentInfo?.image_url,
+            color: garmentInfo?.color,
+            size: garmentInfo?.size
+          } as SolicitudReposicion
+        })
+
+        setSolicitudes(solicitudesConProducto)
+      } else {
+        setSolicitudes([])
       }
     } catch (err) {
       console.error('Error:', err)
@@ -74,23 +125,38 @@ export function AdminReposition() {
   })
 
   const getEstadoBadge = (estado: string) => {
-    const badges = {
-      pendiente: 'bg-yellow-100 text-yellow-800 border-yellow-200',
-      en_proceso: 'bg-blue-100 text-blue-800 border-blue-200',
-      completada: 'bg-green-100 text-green-800 border-green-200',
-      cancelada: 'bg-gray-100 text-gray-800 border-gray-200'
+    if (!estado) {
+      return <span className="text-xs text-gray-500">-</span>
     }
-    return badges[estado as keyof typeof badges] || badges.pendiente
-  }
-
-  const getEstadoLabel = (estado: string) => {
-    const labels = {
-      pendiente: 'Pendiente',
-      en_proceso: 'En Proceso',
-      completada: 'Completada',
-      cancelada: 'Cancelada'
+    
+    const estadoLower = estado.toLowerCase()
+    let bgColor = 'bg-gray-100'
+    let textColor = 'text-gray-700'
+    let label = estado
+    
+    if (estadoLower === 'pendiente') {
+      bgColor = 'bg-yellow-100'
+      textColor = 'text-yellow-700'
+      label = 'Pendiente'
+    } else if (estadoLower === 'en_proceso') {
+      bgColor = 'bg-blue-100'
+      textColor = 'text-blue-700'
+      label = 'En proceso'
+    } else if (estadoLower === 'completada') {
+      bgColor = 'bg-green-100'
+      textColor = 'text-green-700'
+      label = 'Completada'
+    } else if (estadoLower === 'cancelada') {
+      bgColor = 'bg-red-100'
+      textColor = 'text-red-700'
+      label = 'Cancelada'
     }
-    return labels[estado as keyof typeof labels] || estado
+    
+    return (
+      <span className={`text-xs px-2 py-1 rounded-full border border-gray-300 ${bgColor} ${textColor} font-medium`}>
+        {label}
+      </span>
+    )
   }
 
   return (
@@ -121,7 +187,7 @@ export function AdminReposition() {
                   placeholder="Buscar por producto o SKU..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  className="w-full pl-10 pr-4 py-2 bg-white text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
                 />
               </div>
             </div>
@@ -133,13 +199,13 @@ export function AdminReposition() {
                 <select
                   value={filterEstado}
                   onChange={(e) => setFilterEstado(e.target.value)}
-                  className="w-full sm:w-48 pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm appearance-none bg-white"
+                  className="w-full sm:w-48 pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm appearance-none bg-white text-gray-900"
                 >
-                  <option value="all">Todos los estados</option>
-                  <option value="pendiente">Pendiente</option>
-                  <option value="en_proceso">En Proceso</option>
-                  <option value="completada">Completada</option>
-                  <option value="cancelada">Cancelada</option>
+                  <option value="all" className="text-gray-900">Todos los estados</option>
+                  <option value="pendiente" className="text-gray-900">Pendiente</option>
+                  <option value="en_proceso" className="text-gray-900">En Proceso</option>
+                  <option value="completada" className="text-gray-900">Completada</option>
+                  <option value="cancelada" className="text-gray-900">Cancelada</option>
                 </select>
               </div>
             </div>
@@ -147,7 +213,7 @@ export function AdminReposition() {
             {/* Refresh Button */}
             <button
               onClick={loadSolicitudes}
-              className="w-full sm:w-auto px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 text-sm font-medium"
+              className="w-full sm:w-auto px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-2 text-sm font-medium"
             >
               <HistoryIcon size={18} />
               Actualizar
@@ -172,93 +238,260 @@ export function AdminReposition() {
                 <p className="text-gray-500 text-sm">No se encontraron solicitudes de reposición</p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-gray-200 bg-gray-50">
-                      <th className="text-left py-3 px-4 text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                        Producto
-                      </th>
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                        Nombre
-                      </th>
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                        SKU
-                      </th>
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                        Disponible
-                      </th>
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                        Umbral
-                      </th>
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                        Cantidad Solicitada
-                      </th>
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                        Estado
-                      </th>
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                        Acción
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {filteredSolicitudes.map((solicitud) => (
-                      <tr
-                        key={solicitud.id}
-                        className="hover:bg-gray-50 transition-colors"
-                      >
-                        <td className="py-3 px-4">
-                          <div className="flex items-center">
-                            {solicitud.cantidad_actual < solicitud.umbral ? (
-                              <AlertTriangleIcon size={18} className="text-red-500 mr-2 flex-shrink-0" />
-                            ) : (
-                              <CheckCircleIcon size={18} className="text-green-500 mr-2 flex-shrink-0" />
-                            )}
+              <>
+                {/* Desktop Table View */}
+                <div className="hidden md:block p-4 overflow-x-auto max-h-[600px] overflow-y-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="sticky top-0 bg-white z-10">
+                      <tr className="text-gray-600">
+                        <th className="py-2 px-4 font-medium text-center align-middle">Producto</th>
+                        <th className="py-2 px-4 font-medium text-center align-middle">Nombre</th>
+                        <th className="py-2 px-4 font-medium text-center align-middle">SKU</th>
+                        <th className="py-2 px-4 font-medium text-center align-middle">Color</th>
+                        <th className="py-2 px-4 font-medium text-center align-middle">Talla</th>
+                        <th className="py-2 px-4 font-medium text-center align-middle">Disponible</th>
+                        <th className="py-2 px-4 font-medium text-center align-middle">Umbral</th>
+                        <th className="py-2 px-4 font-medium text-center align-middle">Cantidad Solicitada</th>
+                        <th className="py-2 px-4 font-medium text-center align-middle">Estado</th>
+                        <th className="py-2 px-4 font-medium text-center align-middle">Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredSolicitudes.map((solicitud) => {
+                        const isCritical = solicitud.cantidad_actual < solicitud.umbral
+                        return (
+                          <tr key={solicitud.id} className="border-t border-gray-100">
+                            <td className="py-2 px-4 text-center align-middle">
+                              <div className="flex justify-center">
+                                {solicitud.image_url ? (
+                                  <img 
+                                    src={solicitud.image_url} 
+                                    alt={solicitud.producto_nombre}
+                                    className="w-12 h-12 rounded-lg object-cover border border-gray-200"
+                                    onError={(e) => {
+                                      (e.target as HTMLImageElement).style.display = 'none'
+                                    }}
+                                  />
+                                ) : (
+                                  <div className="w-12 h-12 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center">
+                                    <span className="text-gray-400 text-xs">IMG</span>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                            <td className="py-2 px-4 text-gray-800 text-center align-middle">{solicitud.producto_nombre}</td>
+                            <td className="py-2 px-4 text-gray-600 text-center align-middle">{solicitud.sku}</td>
+                            <td className="py-2 px-4 text-gray-600 text-center align-middle">{solicitud.color || 'N/A'}</td>
+                            <td className="py-2 px-4 text-gray-600 text-center align-middle">{solicitud.size || 'N/A'}</td>
+                            <td className={`py-2 px-4 font-semibold text-center align-middle ${
+                              isCritical ? 'text-red-600' : 'text-gray-900'
+                            }`}>
+                              {solicitud.cantidad_actual}
+                            </td>
+                            <td className="py-2 px-4 text-gray-600 text-center align-middle">{solicitud.umbral}</td>
+                            <td className="py-2 px-4 text-center align-middle">
+                              <span className="text-xs font-medium text-gray-900">
+                                {solicitud.cantidad_solicitada !== null && solicitud.cantidad_solicitada !== undefined
+                                  ? solicitud.cantidad_solicitada
+                                  : '—'}
+                              </span>
+                            </td>
+                            <td className="py-2 px-4 text-center align-middle">
+                              {getEstadoBadge(solicitud.estado)}
+                            </td>
+                            <td className="py-2 px-4 text-center align-middle">
+                              <div className="flex items-center justify-center gap-1.5">
+                                {solicitud.estado === 'pendiente' && (
+                                  <>
+                                    <button
+                                      className="px-2.5 py-1 text-xs font-medium text-blue-700 border border-blue-300 rounded hover:bg-blue-50 transition-colors"
+                                      onClick={async () => {
+                                        const { error } = await supabase
+                                          .from('solicitudes_reposicion')
+                                          .update({ estado: 'en_proceso' })
+                                          .eq('id', solicitud.id)
+                                        
+                                        if (!error) {
+                                          loadSolicitudes()
+                                        }
+                                      }}
+                                    >
+                                      Iniciar proceso
+                                    </button>
+                                    <button
+                                      className="px-2.5 py-1 text-xs font-medium text-gray-600 border border-gray-300 rounded hover:bg-gray-50 transition-colors"
+                                      onClick={async () => {
+                                        if (confirm('¿Está seguro de cancelar esta solicitud?')) {
+                                          const { error } = await supabase
+                                            .from('solicitudes_reposicion')
+                                            .update({ estado: 'cancelada' })
+                                            .eq('id', solicitud.id)
+                                          
+                                          if (!error) {
+                                            loadSolicitudes()
+                                          }
+                                        }
+                                      }}
+                                    >
+                                      Cancelar
+                                    </button>
+                                  </>
+                                )}
+                                {solicitud.estado === 'en_proceso' && (
+                                  <>
+                                    <button
+                                      className="px-2.5 py-1 text-xs font-medium text-green-700 border border-green-300 rounded hover:bg-green-50 transition-colors"
+                                      onClick={async () => {
+                                        try {
+                                          // 1. Actualizar el estado de la solicitud a completada
+                                          const { error: updateError } = await supabase
+                                            .from('solicitudes_reposicion')
+                                            .update({ estado: 'completada' })
+                                            .eq('id', solicitud.id)
+                                          
+                                          if (updateError) {
+                                            console.error('Error actualizando estado:', updateError)
+                                            alert('Error al actualizar el estado. Por favor, intenta de nuevo.')
+                                            return
+                                          }
+
+                                          // 2. Si hay cantidad_solicitada, sumarla al inventario del producto
+                                          if (solicitud.cantidad_solicitada !== null && solicitud.cantidad_solicitada > 0) {
+                                            // Buscar el garment por SKU
+                                            const { data: garmentData, error: garmentError } = await supabase
+                                              .from('garments')
+                                              .select('id, qty')
+                                              .eq('sku', solicitud.sku)
+                                              .limit(1)
+                                              .single()
+
+                                            if (garmentError) {
+                                              console.error('Error buscando garment:', garmentError)
+                                              alert('Error al buscar el producto. El estado se actualizó pero no se pudo actualizar el inventario.')
+                                            } else if (garmentData) {
+                                              // Calcular nuevo qty sumando la cantidad solicitada
+                                              const currentQty = Number(garmentData.qty || 0)
+                                              const newQty = currentQty + solicitud.cantidad_solicitada
+
+                                              // Actualizar el qty en garments
+                                              const { error: qtyError } = await supabase
+                                                .from('garments')
+                                                .update({ qty: newQty })
+                                                .eq('id', garmentData.id)
+
+                                              if (qtyError) {
+                                                console.error('Error actualizando qty:', qtyError)
+                                                alert('Error al actualizar el inventario. El estado se actualizó pero el inventario no se modificó.')
+                                              } else {
+                                                alert(`Solicitud completada. Se agregaron ${solicitud.cantidad_solicitada} unidades al inventario.`)
+                                              }
+                                            }
+                                          } else {
+                                            alert('Solicitud completada. (No se especificó cantidad solicitada)')
+                                          }
+
+                                          // Recargar las solicitudes
+                                          loadSolicitudes()
+                                        } catch (error) {
+                                          console.error('Error inesperado:', error)
+                                          alert('Error al completar la solicitud. Por favor, intenta de nuevo.')
+                                        }
+                                      }}
+                                    >
+                                      Completar
+                                    </button>
+                                    <button
+                                      className="px-2.5 py-1 text-xs font-medium text-gray-600 border border-gray-300 rounded hover:bg-gray-50 transition-colors"
+                                      onClick={async () => {
+                                        if (confirm('¿Está seguro de cancelar esta solicitud?')) {
+                                          const { error } = await supabase
+                                            .from('solicitudes_reposicion')
+                                            .update({ estado: 'cancelada' })
+                                            .eq('id', solicitud.id)
+                                          
+                                          if (!error) {
+                                            loadSolicitudes()
+                                          }
+                                        }
+                                      }}
+                                    >
+                                      Cancelar
+                                    </button>
+                                  </>
+                                )}
+                                {solicitud.estado === 'completada' && (
+                                  <span className="text-xs text-gray-500 font-medium">Completada</span>
+                                )}
+                                {solicitud.estado === 'cancelada' && (
+                                  <span className="text-xs text-gray-500 font-medium">Cancelada</span>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                
+                {/* Mobile Card View */}
+                <div className="md:hidden p-3 space-y-3">
+                  {filteredSolicitudes.map((solicitud) => {
+                    const isCritical = solicitud.cantidad_actual < solicitud.umbral
+                    return (
+                      <div key={solicitud.id} className="border border-gray-200 rounded-lg p-3 space-y-2">
+                        <div className="flex items-start gap-3">
+                          {solicitud.image_url ? (
+                            <img 
+                              src={solicitud.image_url} 
+                              alt={solicitud.producto_nombre}
+                              className="w-16 h-16 rounded-lg object-cover border border-gray-200"
+                            />
+                          ) : (
+                            <div className="w-16 h-16 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center">
+                              <span className="text-gray-400 text-xs">IMG</span>
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <h4 className="text-sm font-semibold text-gray-900 truncate">{solicitud.producto_nombre}</h4>
+                            <p className="text-xs text-gray-600 mt-0.5">SKU: {solicitud.sku}</p>
                           </div>
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <span className="text-sm font-medium text-gray-900">{solicitud.producto_nombre}</span>
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <span className="text-sm font-mono text-gray-600">{solicitud.sku}</span>
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <span
-                            className={`text-sm font-semibold ${
-                              solicitud.cantidad_actual < solicitud.umbral
-                                ? 'text-red-600'
-                                : 'text-gray-900'
-                            }`}
-                          >
-                            {solicitud.cantidad_actual}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <span className="text-sm text-gray-600">{solicitud.umbral}</span>
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <span className="text-sm font-medium text-gray-900">
-                            {solicitud.cantidad_solicitada !== null && solicitud.cantidad_solicitada !== undefined
-                              ? solicitud.cantidad_solicitada
-                              : '—'}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <span
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${getEstadoBadge(
-                              solicitud.estado
-                            )}`}
-                          >
-                            {getEstadoLabel(solicitud.estado)}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <div className="flex items-center justify-center gap-2">
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <span className="text-gray-600">Color: </span>
+                            <span className="text-gray-800">{solicitud.color || 'N/A'}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-600">Talla: </span>
+                            <span className="text-gray-800">{solicitud.size || 'N/A'}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-600">Disponible: </span>
+                            <span className={`font-semibold ${
+                              isCritical ? 'text-red-600' : 'text-gray-900'
+                            }`}>
+                              {solicitud.cantidad_actual}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-gray-600">Umbral: </span>
+                            <span className="text-gray-800">{solicitud.umbral}</span>
+                          </div>
+                          {solicitud.cantidad_solicitada !== null && solicitud.cantidad_solicitada !== undefined && (
+                            <div>
+                              <span className="text-gray-600">Solicitada: </span>
+                              <span className="font-semibold text-blue-700">{solicitud.cantidad_solicitada}</span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+                          {getEstadoBadge(solicitud.estado)}
+                          <div className="flex items-center gap-2">
                             {solicitud.estado === 'pendiente' && (
                               <>
                                 <button
-                                  className="px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                                  className="px-2 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 transition-colors"
                                   onClick={async () => {
                                     const { error } = await supabase
                                       .from('solicitudes_reposicion')
@@ -270,10 +503,10 @@ export function AdminReposition() {
                                     }
                                   }}
                                 >
-                                  Iniciar proceso
+                                  Iniciar
                                 </button>
                                 <button
-                                  className="px-3 py-1.5 bg-gray-500 text-white text-xs font-medium rounded-lg hover:bg-gray-600 transition-colors"
+                                  className="px-2 py-1 bg-gray-500 text-white text-xs font-medium rounded hover:bg-gray-600 transition-colors"
                                   onClick={async () => {
                                     if (confirm('¿Está seguro de cancelar esta solicitud?')) {
                                       const { error } = await supabase
@@ -294,10 +527,9 @@ export function AdminReposition() {
                             {solicitud.estado === 'en_proceso' && (
                               <>
                                 <button
-                                  className="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700 transition-colors"
+                                  className="px-2 py-1 bg-green-600 text-white text-xs font-medium rounded hover:bg-green-700 transition-colors"
                                   onClick={async () => {
                                     try {
-                                      // 1. Actualizar el estado de la solicitud a completada
                                       const { error: updateError } = await supabase
                                         .from('solicitudes_reposicion')
                                         .update({ estado: 'completada' })
@@ -309,9 +541,7 @@ export function AdminReposition() {
                                         return
                                       }
 
-                                      // 2. Si hay cantidad_solicitada, sumarla al inventario del producto
                                       if (solicitud.cantidad_solicitada !== null && solicitud.cantidad_solicitada > 0) {
-                                        // Buscar el garment por SKU
                                         const { data: garmentData, error: garmentError } = await supabase
                                           .from('garments')
                                           .select('id, qty')
@@ -323,11 +553,9 @@ export function AdminReposition() {
                                           console.error('Error buscando garment:', garmentError)
                                           alert('Error al buscar el producto. El estado se actualizó pero no se pudo actualizar el inventario.')
                                         } else if (garmentData) {
-                                          // Calcular nuevo qty sumando la cantidad solicitada
                                           const currentQty = Number(garmentData.qty || 0)
                                           const newQty = currentQty + solicitud.cantidad_solicitada
 
-                                          // Actualizar el qty en garments
                                           const { error: qtyError } = await supabase
                                             .from('garments')
                                             .update({ qty: newQty })
@@ -344,7 +572,6 @@ export function AdminReposition() {
                                         alert('Solicitud completada. (No se especificó cantidad solicitada)')
                                       }
 
-                                      // Recargar las solicitudes
                                       loadSolicitudes()
                                     } catch (error) {
                                       console.error('Error inesperado:', error)
@@ -355,7 +582,7 @@ export function AdminReposition() {
                                   Completar
                                 </button>
                                 <button
-                                  className="px-3 py-1.5 bg-gray-500 text-white text-xs font-medium rounded-lg hover:bg-gray-600 transition-colors"
+                                  className="px-2 py-1 bg-gray-500 text-white text-xs font-medium rounded hover:bg-gray-600 transition-colors"
                                   onClick={async () => {
                                     if (confirm('¿Está seguro de cancelar esta solicitud?')) {
                                       const { error } = await supabase
@@ -380,12 +607,12 @@ export function AdminReposition() {
                               <span className="text-xs text-gray-500 font-medium">Cancelada</span>
                             )}
                           </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
             )}
           </div>
         </div>

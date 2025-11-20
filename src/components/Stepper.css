@@ -1,64 +1,26 @@
 .outer-container {
   display: flex;
-  min-height: 100%;
+  min-height: auto;
   flex: 1 1 0%;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   justify-content: flex-start;
-  padding: 0.5rem;
-}
-
-@media (min-width: 640px) {
-  .outer-container {
-    padding: 1rem;
-  }
-}
-
-@media (min-width: 768px) {
-  .outer-container {
-    justify-content: center;
-  }
+  padding: 0;
 }
 
 .step-circle-container {
   margin-left: auto;
   margin-right: auto;
   width: 100%;
-  max-width: 95vw;
-  border-radius: 4px;
-  background-color: white;
-}
-
-@media (min-width: 640px) {
-  .step-circle-container {
-    max-width: 90vw;
-    border-radius: 4px;
-  }
-}
-
-@media (min-width: 768px) {
-  .step-circle-container {
-    max-width: 80rem;
-  }
+  max-width: 100%;
+  border-radius: 1rem;
 }
 
 .step-indicator-row {
   display: flex;
   width: 100%;
   align-items: center;
-  padding: 1rem;
-}
-
-@media (min-width: 640px) {
-  .step-indicator-row {
-    padding: 1.5rem;
-  }
-}
-
-@media (min-width: 768px) {
-  .step-indicator-row {
-    padding: 2rem;
-  }
+  padding: 1.5rem;
 }
 
 .step-content-default {
@@ -67,61 +29,21 @@
 }
 
 .step-default {
-  padding-left: 0.5rem;
-  padding-right: 0.5rem;
-}
-
-@media (min-width: 640px) {
-  .step-default {
-    padding-left: 1rem;
-    padding-right: 1rem;
-  }
-}
-
-@media (min-width: 768px) {
-  .step-default {
-    padding-left: 2rem;
-    padding-right: 2rem;
-  }
-}
-
-.footer-container {
   padding-left: 1rem;
   padding-right: 1rem;
+  padding-top: 1rem;
   padding-bottom: 1rem;
 }
 
-@media (min-width: 640px) {
-  .footer-container {
-    padding-left: 1.5rem;
-    padding-right: 1.5rem;
-    padding-bottom: 1.5rem;
-  }
-}
-
-@media (min-width: 768px) {
-  .footer-container {
-    padding-left: 2rem;
-    padding-right: 2rem;
-    padding-bottom: 2rem;
-  }
+.footer-container {
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+  padding-bottom: 1.5rem;
 }
 
 .footer-nav {
-  margin-top: 1.5rem;
+  margin-top: 2.5rem;
   display: flex;
-}
-
-@media (min-width: 640px) {
-  .footer-nav {
-    margin-top: 2rem;
-  }
-}
-
-@media (min-width: 768px) {
-  .footer-nav {
-    margin-top: 2.5rem;
-  }
 }
 
 .footer-nav.spread {
@@ -134,27 +56,16 @@
 
 .back-button {
   transition: all 350ms;
-  border-radius: 0.375rem;
-  padding: 0.375rem 0.75rem;
-  color: #6b7280;
+  border-radius: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  color: #a3a3a3;
   cursor: pointer;
-  background-color: #f9fafb;
-  border: 1px solid #e5e7eb;
-  font-weight: 500;
-  font-size: 0.875rem;
-}
-
-@media (min-width: 640px) {
-  .back-button {
-    border-radius: 0.5rem;
-    padding: 0.5rem 1rem;
-    font-size: 1rem;
-  }
+  background: none;
+  border: none;
 }
 
 .back-button:hover {
-  color: #374151;
-  background-color: #f3f4f6;
+  color: #52525b;
 }
 
 .back-button.inactive {
@@ -169,43 +80,34 @@
   align-items: center;
   justify-content: center;
   border-radius: 0.375rem;
-  background-color: #fff;
-  color: #000;
-  font-weight: 500;
-  letter-spacing: -0.025em;
-  padding: 0.375rem 1rem;
+  background-color: #000000;
+  color: #fff;
+  font-weight: 700;
+  padding: 0.375rem 0.75rem;
   cursor: pointer;
-  border: 1px solid #d1d5db;
-  font-size: 0.875rem;
+  border: none;
+  font-size: 0.625rem;
 }
 
 @media (min-width: 640px) {
   .next-button {
-    border-radius: 0.5rem;
-    padding: 0.5rem 1.5rem;
-    font-size: 1rem;
+    font-size: 0.75rem;
+    padding: 0.375rem 0.75rem;
   }
 }
 
 .next-button:hover {
-  background-color: #f3f4f6;
-  color: #000;
+  background-color: #1f2937;
 }
 
 .next-button:active {
-  background-color: #e5e7eb;
-  color: #000;
+  background-color: #000000;
 }
 
-.next-button.disabled {
-  background-color: #d1d5db;
-  color: #9ca3af;
+.next-button:disabled {
+  background-color: #9ca3af;
+  opacity: 0.5;
   cursor: not-allowed;
-  pointer-events: none;
-}
-
-.next-button.disabled:hover {
-  background-color: #d1d5db;
 }
 
 .step-indicator {
@@ -243,7 +145,7 @@
   flex: 1;
   overflow: hidden;
   border-radius: 0.25rem;
-  background-color: #d1d5db;
+  background-color: #9ca3af;
 }
 
 .step-connector-inner {
@@ -257,4 +159,4 @@
   height: 1rem;
   width: 1rem;
   color: #fff;
-} 
+}

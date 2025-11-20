@@ -13,7 +13,8 @@ import {
   SearchIcon,
   ExternalLinkIcon,
   UserIcon,
-  DollarSignIcon
+  DollarSignIcon,
+  XIcon
 } from './icons'
 
 interface Modification {
@@ -476,79 +477,49 @@ export function PaymentHistory() {
     try {
       const w = window.open('', '_blank')
       if (!w) return
-      
-      const itemsHtml = sale.items.map(l => {
-        const modificationsHtml = (l.modifications && l.modifications.length > 0) ? `
-          <div style="margin-top: 4px; padding-top: 4px; border-top: 1px solid #e5e7eb;">
-            <div style="font-size: 8px; color: #6b7280; font-weight: 500; margin-bottom: 3px;">Modificaciones:</div>
-            ${l.modifications.map((mod: Modification) => `
-              <div style="font-size: 8px; color: #4b5563; margin-left: 8px; margin-bottom: 2px;">
-                • ${mod.nombre}${mod.descripcion ? ` - ${mod.descripcion}` : ''} 
-                (${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(mod.precio_unitario)} × ${mod.cantidad} = ${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(mod.subtotal)})
-              </div>
-            `).join('')}
-          </div>
-        ` : ''
-        
-        return `
-          <tr style="border-bottom: 1px solid #f3f4f6;">
-            <td style="padding: 6px 0; font-size: 10px; color: #111827;">
-              <div style="font-weight: 500; margin-bottom: 1px;">${l.name}</div>
-              ${l.variant ? `<div style="font-size: 9px; color: #6b7280; margin-bottom: 1px;">${l.variant}</div>` : ''}
-              <div style="font-size: 8px; color: #9ca3af;">SKU: ${l.id}</div>
-              ${modificationsHtml}
-            </td>
-            <td style="padding: 6px 4px; text-align: center; font-size: 10px; color: #111827; font-weight: 500;">
-              x${l.quantity}
-            </td>
-            <td style="padding: 6px 0; text-align: right; font-size: 10px; color: #111827; font-weight: 600;">
-              ${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(l.unitPrice * l.quantity)}
-            </td>
-          </tr>
-        `
-      }).join('')
-      
-      const paymentsHtml = (sale.payments || []).map((p) => {
-        const methodNames: Record<string, string> = {
-          'cash': 'Efectivo',
-          'card': 'Tarjeta',
-          'transfer': 'Transferencia',
-          'voucher': 'Vale',
-          'store-credit': 'Crédito interno'
-        }
-        return `
-          <div style="display: flex; justify-content: space-between; padding: 3px 0; font-size: 10px;">
-            <span style="color: #6b7280; text-transform: capitalize;">${methodNames[p.method] || p.method}:</span>
-            <span style="font-weight: 600; color: #111827;">${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(p.amount)}</span>
-          </div>
-        `
-      }).join('')
-      
-      const customerInfo = sale.customer ? `
-        <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb;">
-          <div style="font-size: 9px; color: #6b7280; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.3px;">Información del Cliente</div>
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; font-size: 10px; color: #111827;">
-            <div>
-              <span style="color: #6b7280; font-weight: 500;">Nombre:</span>
-              <span style="font-weight: 500; margin-left: 4px;">${sale.customer.name || '—'}</span>
+
+      const itemsHtml = sale.items.map(item => `
+        <div class="item-row">
+            <div class="item-image">
+                 ${item.image ? `<img src="${item.image}" alt="img" />` : '<div class="no-img">IMG</div>'}
             </div>
-            ${sale.customer.phone ? `
-            <div>
-              <span style="color: #6b7280; font-weight: 500;">Teléfono:</span>
-              <span style="font-weight: 500; margin-left: 4px;">${sale.customer.phone}</span>
+            <div class="item-details">
+                <div class="item-name">${item.name}</div>
+                ${item.variant ? `<div class="item-variant">${item.variant}</div>` : ''}
             </div>
-            ` : '<div></div>'}
-          </div>
+            <div class="item-totals">
+                <div class="item-qty">x${item.quantity}</div>
+                <div class="item-price">${formatNumber(item.unitPrice * item.quantity)}</div>
+            </div>
+        </div>
+      `).join('')
+
+      const customerHtml = sale.customer ? `
+        <div class="customer-box">
+            <div class="customer-name">${sale.customer.name || 'Cliente General'}</div>
+            ${sale.customer.phone ? `<div class="customer-row"><span class="label">Tel:</span><span class="value">${sale.customer.phone}</span></div>` : ''}
         </div>
       ` : ''
-      
+
+      const barcodeHtml = `
+        <div class="barcode-container">
+           <div class="barcode-lines">
+              ${Array.from({ length: 45 }).map(() => `<div class="bar" style="width: ${Math.random() > 0.6 ? '3px' : '1px'}"></div>`).join('')}
+           </div>
+           <div class="barcode-text">
+              <span>${sale.id.slice(0, 4)}</span>
+              <span>${sale.id.slice(-4)}</span>
+           </div>
+        </div>
+      `
+
       w.document.write(`
         <!DOCTYPE html>
         <html>
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Factura de venta - ${sale.id}</title>
+          <title>Ticket - ${sale.id}</title>
           <style>
             @font-face {
               font-family: 'Helvetica Neue';
@@ -557,160 +528,111 @@ export function PaymentHistory() {
               font-style: normal;
               font-display: swap;
             }
-            * {
-              margin: 0;
-              padding: 0;
-              box-sizing: border-box;
-            }
+            * { margin: 0; padding: 0; box-sizing: border-box; }
             body {
               font-family: 'Helvetica Neue', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-              background: #ffffff;
+              background: #f3f4f6;
               color: #111827;
+              font-size: 12px;
               line-height: 1.4;
+              min-height: 100vh;
+              display: flex;
+              justify-content: center;
+              align-items: flex-start;
+              padding: 20px;
             }
             .container {
-              max-width: 600px;
-              margin: 0 auto;
-              padding: 20px;
-              background: white;
-            }
-            .header {
-              display: flex;
-              align-items: center;
-              margin-bottom: 16px;
-              padding-bottom: 12px;
-              border-bottom: 1px solid #e5e7eb;
-            }
-            .logo {
-              width: 50px;
-              height: 50px;
-              object-fit: contain;
-              margin-right: 12px;
-            }
-            .header-text {
-              flex: 1;
-            }
-            .header-title {
-              font-size: 18px;
-              font-weight: 700;
-              color: #111827;
-              margin-bottom: 2px;
-              letter-spacing: -0.3px;
-            }
-            .header-subtitle {
-              font-size: 10px;
-              color: #6b7280;
-              font-weight: 500;
-            }
-            .info-section {
-              margin-bottom: 12px;
-            }
-            .info-row {
-              display: flex;
-              justify-content: space-between;
-              padding: 4px 0;
-              font-size: 10px;
-            }
-            .info-label {
-              color: #6b7280;
-              font-weight: 500;
-            }
-            .info-value {
-              color: #111827;
-              font-weight: 600;
-            }
-            .items-table {
               width: 100%;
-              border-collapse: collapse;
-              margin: 12px 0;
+              max-width: 380px;
+              margin: 0 auto;
+              padding: 24px;
+              background: white;
+              border-radius: 24px;
+              border: 1px solid #e5e7eb;
+              box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
             }
-            .items-table thead {
+            .header { text-align: center; margin-bottom: 20px; }
+            .logo { height: 64px; object-fit: contain; margin-bottom: 16px; max-width: 100%; }
+            .ticket-label { font-size: 10px; color: #9ca3af; text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; margin-bottom: 4px; }
+            .ticket-value { font-size: 14px; font-weight: 700; color: #111827; font-family: monospace; margin-bottom: 12px; }
+            .date-row { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; font-weight: 500; color: #374151; }
+            .dot { width: 4px; height: 4px; background: #d1d5db; border-radius: 50%; }
+            
+            .dashed-line {
+              border-top: 2px dashed #e5e7eb;
+              margin: 16px 0;
+              position: relative;
+            }
+            .dashed-line::before,
+            .dashed-line::after {
+              content: '';
+              position: absolute;
+              top: 50%;
+              transform: translateY(-50%);
+              width: 24px;
+              height: 24px;
+              background: #f3f4f6;
+              border-radius: 50%;
+            }
+            .dashed-line::before { left: -36px; }
+            .dashed-line::after { right: -36px; }
+            
+            /* Customer Box */
+            .customer-box {
               background: #f9fafb;
-              border-bottom: 1px solid #e5e7eb;
+              border: 1px solid #f3f4f6;
+              border-radius: 12px;
+              padding: 16px;
+              margin-bottom: 24px;
             }
-            .items-table th {
-              padding: 6px 0;
-              text-align: left;
-              font-size: 9px;
-              font-weight: 600;
-              color: #6b7280;
-              text-transform: uppercase;
-              letter-spacing: 0.3px;
-            }
-            .items-table th:last-child {
-              text-align: right;
-            }
-            .items-table th:nth-child(2) {
-              text-align: center;
-            }
-            .items-table td {
-              padding: 6px 0;
-              font-size: 10px;
-            }
-            .totals {
-              margin-top: 12px;
-              padding-top: 12px;
-              border-top: 1px solid #e5e7eb;
-            }
-            .total-row {
-              display: flex;
-              justify-content: space-between;
-              padding: 4px 0;
-              font-size: 11px;
-            }
-            .total-row.final {
-              margin-top: 8px;
-              padding-top: 8px;
-              border-top: 1px solid #e5e7eb;
-              font-size: 14px;
-              font-weight: 700;
-              color: #111827;
-            }
-            .total-label {
-              color: #6b7280;
-              font-weight: 500;
-            }
-            .total-value {
-              color: #111827;
-              font-weight: 600;
-            }
-            .total-row.final .total-label,
-            .total-row.final .total-value {
-              color: #111827;
-              font-weight: 700;
-            }
-            .payments-section {
-              margin-top: 12px;
-              padding-top: 12px;
-              border-top: 1px solid #e5e7eb;
-            }
-            .payments-title {
-              font-size: 10px;
-              color: #6b7280;
-              font-weight: 600;
-              margin-bottom: 8px;
-              text-transform: uppercase;
-              letter-spacing: 0.3px;
-            }
-            .footer {
-              margin-top: 16px;
-              padding-top: 12px;
-              border-top: 1px dashed #d1d5db;
-              text-align: center;
-              font-size: 9px;
-              color: #9ca3af;
-            }
+            .customer-name { font-weight: 700; font-size: 14px; margin-bottom: 8px; }
+            .customer-row { display: flex; gap: 8px; margin-bottom: 4px; font-size: 12px; }
+            .customer-row .label { color: #9ca3af; min-width: 40px; }
+            .customer-row .value { color: #4b5563; word-break: break-word; }
+            
+            /* Items */
+            .section-title { font-size: 10px; text-transform: uppercase; color: #9ca3af; font-weight: 600; margin-bottom: 8px; }
+            .items-list { margin-bottom: 20px; border-top: 1px solid #f3f4f6; padding-top: 16px; }
+            .item-row { display: flex; gap: 12px; margin-bottom: 12px; align-items: center; }
+            .item-image { width: 48px; height: 48px; border-radius: 8px; background: #f3f4f6; overflow: hidden; flex-shrink: 0; border: 1px solid #e5e7eb; }
+            .item-image img { width: 100%; height: 100%; object-fit: cover; }
+            .item-image .no-img { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 8px; }
+            .item-details { flex: 1; min-width: 0; }
+            .item-name { font-weight: 500; font-size: 12px; color: #111827; }
+            .item-variant { font-size: 10px; color: #6b7280; }
+            .item-totals { text-align: right; }
+            .item-qty { font-family: monospace; font-size: 12px; color: #111827; }
+            .item-price { font-size: 10px; color: #6b7280; }
+            
+            /* Totals */
+            .totals-section { border-top: 1px solid #f3f4f6; padding-top: 16px; margin-bottom: 24px; }
+            .total-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 12px; }
+            .total-row.final { font-weight: 700; font-size: 14px; border-top: 1px solid #f3f4f6; padding-top: 12px; margin-top: 12px; }
+            
+            /* Barcode */
+            .barcode-container { text-align: center; margin-top: 24px; }
+            .barcode-lines { height: 48px; display: flex; justify-content: center; gap: 3px; overflow: hidden; opacity: 0.8; margin-bottom: 4px; }
+            .barcode-lines .bar { background: black; }
+            .barcode-text { display: flex; justify-content: space-between; padding: 0 16px; font-family: monospace; font-size: 10px; color: #9ca3af; letter-spacing: 2px; }
+            
             @media print {
-              body {
-                margin: 0;
-                padding: 0;
-              }
+              body { background-color: white; padding: 0; display: block; }
               .container {
-                padding: 16px;
-                max-width: 100%;
+                width: 100%;
+                max-width: 380px;
+                margin: 0 auto;
+                border: 1px solid #e5e7eb;
+                border-radius: 24px;
+                padding: 20px;
+                box-shadow: none;
               }
-              @page {
-                margin: 0.8cm;
+              .dashed-line::before,
+              .dashed-line::after {
+                background: white;
+              }
+              @page { 
+                margin: 1cm;
+                size: auto; 
               }
             }
           </style>
@@ -718,98 +640,79 @@ export function PaymentHistory() {
         <body>
           <div class="container">
             <div class="header">
-              ${logoBase64 ? `<img src="${logoBase64}" alt="Dwell Logo" class="logo" />` : ''}
-              <div class="header-text">
-                <div class="header-title">Ticket de Venta</div>
-                <div class="header-subtitle">Factura #${sale.id}</div>
-              </div>
-            </div>
-            
-            <div class="info-section">
-              <div class="info-row">
-                <span class="info-label">Fecha y Hora:</span>
-                <span class="info-value">${new Date(`${sale.date}T${sale.time}`).toLocaleString('es-CO', { dateStyle: 'long', timeStyle: 'short' })}</span>
+              ${logoBase64 ? `<img src="${logoBase64}" alt="Logo" class="logo" />` : ''}
+              <div class="ticket-label">TICKET ID</div>
+              <div class="ticket-value">${sale.id}</div>
+              <div class="ticket-label" style="margin-top: 16px;">DATE & TIME</div>
+              <div class="date-row">
+                <span>${new Date(`${sale.date}T${sale.time}`).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }).replace('.', '')}</span>
+                <span class="dot"></span>
+                <span>${sale.time}</span>
               </div>
               ${sale.seller ? `
-              <div class="info-row">
-                <span class="info-label">Vendedor:</span>
-                <span class="info-value">${sale.seller}</span>
-              </div>
+                 <div class="ticket-label" style="margin-top: 12px;">Vendedor</div>
+                 <div style="font-weight:500;">${sale.seller}</div>
               ` : ''}
             </div>
-            
-            <table class="items-table">
-              <thead>
-                <tr>
-                  <th>Producto</th>
-                  <th>Cantidad</th>
-                  <th>Total</th>
-                </tr>
-              </thead>
-              <tbody>
+
+            <div class="dashed-line"></div>
+
+            ${customerHtml}
+
+            <div class="section-title">Products</div>
+            <div class="items-list">
                 ${itemsHtml}
-              </tbody>
-            </table>
-            
-            <div class="totals">
-              <div class="total-row">
-                <span class="total-label">Subtotal:</span>
-                <span class="total-value">${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(sale.subtotal)}</span>
-              </div>
-              ${sale.discount ? `
-              <div class="total-row">
-                <span class="total-label">Descuento:</span>
-                <span class="total-value" style="color: #dc2626;">-${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(sale.discount.amount)}</span>
-              </div>
-              ` : ''}
-              <div class="total-row final">
-                <span class="total-label">Total a Pagar:</span>
-                <span class="total-value">${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(sale.totalPaid)}</span>
-              </div>
             </div>
-            
-            ${(sale.payments && sale.payments.length > 0) ? `
-            <div class="payments-section">
-              <div class="payments-title">Métodos de Pago</div>
-              ${paymentsHtml}
+
+            <div class="totals-section">
+               <div class="total-row">
+                   <span style="color: #6b7280;">Subtotal</span>
+                   <span style="font-weight: 500;">${formatNumber(sale.subtotal)}</span>
+               </div>
+               ${sale.discount ? `
+               <div class="total-row">
+                   <span style="color: #6b7280;">Descuento</span>
+                   <span style="font-weight: 500; color: #dc2626;">-${formatNumber(sale.discount.amount)}</span>
+               </div>
+               ` : ''}
+               <div class="total-row final">
+                   <span>Total</span>
+                   <span>${formatNumber(sale.totalPaid)}</span>
+               </div>
             </div>
-            ` : ''}
+
+            ${barcodeHtml}
             
-            ${customerInfo}
-            
-            <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid #e5e7eb;">
-              <div style="text-align: center; margin-bottom: 8px;">
-                <h3 style="font-size: 12px; font-weight: 700; color: #111827; margin-bottom: 4px; letter-spacing: 0.5px;">DWELL ROPA DEPORTIVA</h3>
-                <p style="font-size: 9px; color: #4b5563; line-height: 1.4; margin-bottom: 6px;">
+            <div style="text-align: center; margin-top: 24px; padding-top: 20px; border-top: 1px dashed #d1d5db;">
+               <h3 style="font-size: 12px; font-weight: 700; color: #111827; margin-bottom: 8px; letter-spacing: 0.5px;">DWELL ROPA DEPORTIVA</h3>
+               <p style="font-size: 9px; color: #4b5563; line-height: 1.4; margin-bottom: 8px; max-width: 320px; margin-left: auto; margin-right: auto;">
                   Somos una empresa Santandereana especializada en ropa deportiva premium y de alto rendimiento, fabricada con las mejores textiles del mercado y con la mejor calidad garantizada.
-                </p>
-                <div style="margin-top: 6px; font-size: 8px; color: #9ca3af;">
-                  <a href="https://dwell.com.co/" style="color: #6b7280; text-decoration: none;">www.dwell.com.co</a>
-                </div>
-              </div>
-            </div>
-            
-            <div class="footer">
-              <div style="font-size: 9px;">Gracias por su compra</div>
-              <div style="margin-top: 2px; font-size: 8px;">Este documento es válido como comprobante de pago</div>
-              <div style="margin-top: 2px; font-size: 8px; color: #6b7280;">
-                Cambios solo por talla, no devolución de dinero. Garantía de dos meses por prenda.
-              </div>
+               </p>
+               <div style="margin-bottom: 12px; font-size: 8px; color: #6b7280;">
+                  <a href="https://dwellcol.com" style="color: #6b7280; text-decoration: none;">dwellcol.com</a>
+               </div>
+               <div style="font-size: 9px; color: #9ca3af; margin-top: 12px;">
+                  <p style="margin-bottom: 4px;">Gracias por su compra</p>
+                  <p style="margin-bottom: 4px;">Este documento es válido como comprobante de pago</p>
+                  <p style="margin-top: 4px; font-size: 8px; color: #6b7280;">Cambios solo por talla, no devolución de dinero. Garantía de dos meses por prenda</p>
+               </div>
             </div>
           </div>
           <script>
             window.onload = function() {
               setTimeout(function() {
                 window.print();
-                window.close();
-              }, 300);
+                // window.close(); // Optional: close after print
+              }, 500);
             }
           </script>
         </body>
         </html>
       `)
       w.document.close()
-    } catch {}
+    } catch (error) {
+      console.error('Error printing invoice:', error)
+    }
   }
 
   const exportCSV = () => {
@@ -1105,140 +1008,179 @@ export function PaymentHistory() {
         </div>
       </div>
 
-      {/* Modal Detalle de Venta */}
+      {/* Modal Detalle de Venta - Ticket Style */}
       {isDetailOpen && selectedSale && (
-        <div className="fixed inset-0 z-50 p-2 sm:p-4 lg:p-6" style={{ overflow: 'auto' }}>
-          {/* Blur overlay */}
-          <div className="fixed inset-0 bg-white/20 backdrop-blur-[2px] z-0 transition-all duration-300" />
-          {/* Modal centrado */}
-          <div 
-            className="absolute left-0 right-0 flex items-center justify-center z-10"
-            style={{ 
-              top: `${modalPosition.top}px`,
-              transform: 'translateY(-50%)'
-            }}
-          >
-            <div 
-              className="bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-3xl max-h-[calc(100vh-4rem)] sm:max-h-[calc(100vh-6rem)] overflow-y-auto flex flex-col relative mb-4 sm:mb-6"
-            >
-            {/* Header */}
-            <div className="px-3 sm:px-6 pt-4 sm:pt-6 pb-3 sm:pb-4 border-b border-gray-100 bg-white sticky top-0 z-10">
-              <div className="flex flex-col gap-2">
-                <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between gap-2">
-                  <div>
-                    <div className="text-xl sm:text-2xl lg:text-3xl font-black text-gray-900 tracking-tight leading-tight">{formatNumber(selectedSale.totalPaid)}</div>
-                    <div className="text-xs sm:text-sm lg:text-base font-semibold text-gray-700 mt-1 uppercase tracking-wider">Folio: {selectedSale.id}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-xs sm:text-sm lg:text-base text-gray-500 font-medium">{selectedSale.date}</div>
-                    <div className="text-[10px] sm:text-xs text-gray-400">{selectedSale.time}</div>
-                  </div>
-                </div>
-                <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 mt-3 sm:mt-4 text-center justify-between">
-                  <div className="flex-1">
-                    <div className="text-sm sm:text-base lg:text-lg font-bold text-gray-900 mb-1">{selectedSale.seller}</div>
-                    <div className="text-[10px] sm:text-xs uppercase tracking-wider text-gray-400 font-medium">Vendedor</div>
-                  </div>
-                  <div className="flex-1">
-                    <div className="text-sm sm:text-base lg:text-lg font-bold text-gray-900 mb-1">{selectedSale.register}</div>
-                    <div className="text-[10px] sm:text-xs uppercase tracking-wider text-gray-400 font-medium">Caja</div>
-                  </div>
-                  <div className="flex-1">
-                    <div className="text-sm sm:text-base lg:text-lg font-bold text-gray-900 mb-1 truncate">{selectedSale.customer?.name || 'Anónimo'}</div>
-                    <div className="text-[10px] sm:text-xs uppercase tracking-wider text-gray-400 font-medium">Cliente</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Productos */}
-            <div className="px-3 sm:px-6 py-3 sm:py-5 flex-1 overflow-y-auto bg-white apple-scrollbar">
-              <h3 className="font-semibold text-gray-800 mb-3 sm:mb-4 text-xs sm:text-sm lg:text-base border-b border-gray-100 pb-2 tracking-wide uppercase">Productos vendidos</h3>
-              <div className="divide-y divide-gray-50">
-                {selectedSale.items.map((item) => (
-                  <div key={item.id} className="py-2 text-xs sm:text-sm">
-                    <div className="grid grid-cols-12 items-center">
-                      <div className="col-span-7 font-medium text-gray-900 truncate text-left">
-                        <div className="text-xs sm:text-sm">{item.name}{item.variant ? ` – ${item.variant}` : ''}</div>
+        <div className="fixed inset-0 z-50 overflow-y-auto overflow-x-hidden">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-0 transition-all duration-300" onClick={closeSaleDetail}></div>
+          
+          <div className="absolute inset-0 flex items-center justify-center p-4 z-10 pointer-events-none min-h-full overflow-x-hidden">
+            <div className="bg-white w-full max-w-md rounded-[24px] shadow-2xl overflow-hidden flex flex-col relative pointer-events-auto max-h-[90vh] my-4 overflow-x-hidden">
+              
+              {/* Scrollable Content */}
+              <div className="flex-1 overflow-y-auto overflow-x-hidden">
+              {/* Ticket Info Header */}
+              <div className="pt-8 pb-4 px-8 flex flex-col space-y-4">
+                  {/* Logo */}
+                  {logoBase64 && (
+                      <div className="flex justify-center mb-4">
+                          <img 
+                              src={logoBase64} 
+                              alt="Logo" 
+                              className="h-16 object-contain max-w-full"
+                          />
                       </div>
-                      <div className="col-span-2 text-gray-500 font-mono text-[10px] sm:text-xs text-center">x{item.quantity}</div>
-                      <div className="col-span-3 font-semibold text-gray-900 text-right text-xs sm:text-sm">{formatNumber(item.unitPrice * item.quantity)}</div>
-                    </div>
-                    {/* Modificaciones */}
-                    {item.modifications && item.modifications.length > 0 && (
-                      <div className="mt-2 pt-2 border-t border-gray-100 ml-0">
-                        <div className="text-[10px] sm:text-xs font-medium text-gray-600 mb-1.5">Modificaciones:</div>
-                        <div className="space-y-1">
-                          {item.modifications.map((mod) => (
-                            <div key={mod.id} className="text-[10px] sm:text-xs text-gray-600 bg-gray-50 rounded px-2 py-1">
-                              <span className="font-medium">{mod.nombre}</span>
-                              {mod.descripcion && <span className="text-gray-500"> - {mod.descripcion}</span>}
-                              <span className="ml-2 text-gray-500">
-                                ({formatNumber(mod.precio_unitario)} × {mod.cantidad} = {formatNumber(mod.subtotal)})
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+                  )}
+                  
+                  {/* Ticket ID */}
+                  <div className="flex flex-col">
+                      <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-1">TICKET ID</span>
+                      <span className="text-sm font-bold text-gray-900 font-mono">{selectedSale.id}</span>
                   </div>
-                ))}
-              </div>
-            </div>
 
-            {/* Resumen financiero y acciones */}
-            <div className="px-3 sm:px-6 pt-3 sm:pt-5 pb-4 sm:pb-6 bg-gray-50 border-t border-gray-100 sticky bottom-0">
-              <div className="max-w-md mx-auto">
-                <div className="flex flex-col gap-1.5 sm:gap-2 text-xs sm:text-sm lg:text-base">
-                  <div className="flex justify-between items-center">
-                    <span className="text-gray-500 font-normal">Subtotal</span>
-                    <span className="font-semibold text-gray-900">{formatNumber(selectedSale.subtotal)}</span>
+                  {/* Date & Time */}
+                  <div className="flex flex-col">
+                      <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-1">DATE & TIME</span>
+                      <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                          <span>{new Date(`${selectedSale.date}T${selectedSale.time}`).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }).replace('.', '')}</span>
+                          <span className="w-1 h-1 rounded-full bg-gray-300"></span>
+                          <span>{selectedSale.time}</span>
+                      </div>
                   </div>
-                  {selectedSale.discount && (
-                    <div className="flex justify-between items-center">
-                      <span className="text-gray-500 font-normal">Descuento ({selectedSale.discount.label})</span>
-                      <span className="font-semibold text-green-600">-{formatNumber(selectedSale.discount.amount)}</span>
+
+                  {/* Seller info */}
+                  {selectedSale.seller && (
+                    <div className="flex flex-col">
+                        <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-1">Vendedor</span>
+                        <span className="text-sm font-medium text-gray-900">{selectedSale.seller}</span>
                     </div>
                   )}
-                  <div className="border-t border-gray-200 my-1.5 sm:my-2"></div>
-                  <div className="flex justify-between items-center text-base sm:text-lg lg:text-xl font-black">
-                    <span className="text-gray-900">Total pagado</span>
-                    <span className="text-green-600">{formatNumber(selectedSale.totalPaid)}</span>
+              </div>
+
+              {/* Dashed Divider */}
+              <div className="relative w-full h-px my-2">
+                <div className="absolute inset-0 border-t-2 border-dashed border-gray-200"></div>
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 w-6 h-6 bg-gray-900 rounded-full"></div>
+                <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-6 h-6 bg-gray-900 rounded-full"></div>
+              </div>
+
+              {/* Ticket Details */}
+              <div className="px-8 py-6 space-y-6">
+
+                   {/* Customer Info */}
+                  <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                      <div className="text-sm font-bold text-gray-900 mb-2">{selectedSale.customer?.name || 'Cliente General'}</div>
+                      <div className="space-y-1.5">
+                          {selectedSale.customer?.phone && (
+                              <div className="flex items-start gap-2">
+                                  <span className="text-xs text-gray-400 font-medium whitespace-nowrap">Tel:</span>
+                                  <span className="text-xs text-gray-600 break-words">{selectedSale.customer.phone}</span>
+                              </div>
+                          )}
+                          {!selectedSale.customer?.phone && (
+                              <span className="text-xs text-gray-400">Sin datos adicionales</span>
+                          )}
+                      </div>
                   </div>
-                  <div className="flex justify-between items-center pt-1">
-                    <span className="text-[10px] sm:text-xs text-gray-400">Método de pago</span>
-                    <span className="text-[10px] sm:text-xs font-medium text-gray-700 capitalize truncate ml-2">{getPaymentMethodName(selectedSale.paymentMethod)}{selectedSale.paymentDetail ? ` (${selectedSale.paymentDetail})` : ''}</span>
+
+                   {/* Products Summary */}
+                  <div className="border-t border-gray-100 pt-4">
+                      <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-2 block">Products</span>
+                      <div className="space-y-2">
+                           {selectedSale.items.map((item, idx) => (
+                              <div key={item.id || idx} className="flex items-center gap-3">
+                                  {/* Product Image */}
+                                  <div className="w-12 h-12 rounded-lg bg-gray-100 border border-gray-200 flex-shrink-0 overflow-hidden">
+                                      {item.image ? (
+                                          <img 
+                                              src={item.image} 
+                                              alt={item.name}
+                                              className="w-full h-full object-cover"
+                                              onError={(e) => {
+                                                  (e.target as HTMLImageElement).style.display = 'none'
+                                              }}
+                                          />
+                                      ) : (
+                                          <div className="w-full h-full flex items-center justify-center">
+                                              <span className="text-gray-400 text-[8px]">IMG</span>
+                                          </div>
+                                      )}
+                                  </div>
+                                  {/* Product Name and Quantity */}
+                                  <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
+                                      <div className="flex-1 min-w-0">
+                                          <div className="text-xs text-gray-900 font-medium">{item.name}</div>
+                                          {item.variant && (
+                                              <div className="text-[10px] text-gray-500">{item.variant}</div>
+                                          )}
+                                      </div>
+                                      <div className="text-right">
+                                         <div className="text-xs font-mono text-gray-900 whitespace-nowrap">x{item.quantity}</div>
+                                         <div className="text-[10px] text-gray-500">{formatNumber(item.unitPrice * item.quantity)}</div>
+                                      </div>
+                                  </div>
+                              </div>
+                           ))}
+                      </div>
                   </div>
-                </div>
-                {selectedSale.internalNotes && selectedSale.internalNotes.length > 0 && (
-                  <div className="mt-3 sm:mt-4">
-                    <div className="text-[10px] sm:text-xs uppercase tracking-wider text-gray-400 font-medium mb-1">Notas internas</div>
-                    <ul className="list-disc pl-4 sm:pl-5 text-xs sm:text-sm text-gray-700 space-y-1">
-                      {selectedSale.internalNotes.map((n, i) => <li key={i}>{n}</li>)}
-                    </ul>
+                  
+                  {/* Totals */}
+                  <div className="border-t border-gray-100 pt-4 space-y-2">
+                      <div className="flex justify-between text-xs">
+                          <span className="text-gray-600">Subtotal</span>
+                          <span className="font-medium text-gray-900">{formatNumber(selectedSale.subtotal)}</span>
+                      </div>
+                      {selectedSale.discount && (
+                          <div className="flex justify-between text-xs">
+                              <span className="text-gray-600">Descuento</span>
+                              <span className="font-medium text-red-600">-{formatNumber(selectedSale.discount.amount)}</span>
+                          </div>
+                      )}
+                      <div className="flex justify-between text-sm font-bold pt-2 border-t border-gray-100">
+                          <span className="text-gray-900">Total</span>
+                          <span className="text-gray-900">{formatNumber(selectedSale.totalPaid)}</span>
+                      </div>
                   </div>
-                )}
-                {selectedSale.returns && selectedSale.returns.length > 0 && (
-                  <div className="mt-3 sm:mt-4">
-                    <div className="text-[10px] sm:text-xs uppercase tracking-wider text-gray-400 font-medium mb-1">Historial de ajustes</div>
-                    <div className="text-xs sm:text-sm text-gray-700 space-y-1">
-                      {selectedSale.returns.map(r => (
-                        <div key={r.id} className="flex flex-col sm:flex-row justify-between gap-1">
-                          <span className="text-xs">{r.date} • {r.user} • {r.reason}</span>
-                          <span className="text-[10px] sm:text-xs text-gray-500">{r.refundType === 'reembolso' ? 'Reembolso' : 'Vale'}</span>
-                        </div>
-                      ))}
-                    </div>
+              </div>
+              
+              {/* Barcode */}
+              <div className="pb-4 px-8 flex flex-col items-center">
+                  <div className="h-12 w-full flex justify-center items-stretch gap-[3px] opacity-80 overflow-hidden">
+                     {Array.from({ length: 45 }).map((_, i) => (
+                       <div key={i} className="bg-black flex-shrink-0" style={{ width: Math.random() > 0.6 ? '3px' : '1px' }}></div>
+                     ))}
                   </div>
-                )}
-                <div className="flex flex-col sm:flex-row justify-end mt-4 sm:mt-6 gap-2">
+                   <div className="flex justify-between w-full text-[10px] font-mono text-gray-400 mt-1 px-4 tracking-widest">
+                      <span>{selectedSale.id.slice(0, 4)}</span>
+                      <span>{selectedSale.id.slice(-4)}</span>
+                   </div>
+              </div>
+              </div>
+
+              {/* Footer Actions */}
+              <div className="p-4 bg-gray-50 border-t border-gray-100 flex gap-3">
                   {user?.role === 'admin' && (
-                    <button onClick={() => setIsReturnOpen(true)} className="w-full sm:w-auto px-3 sm:px-4 py-2 rounded-lg bg-amber-500 text-white font-bold text-xs sm:text-sm">Registrar devolución</button>
+                    <button 
+                        onClick={() => setIsReturnOpen(true)}
+                        className="flex-1 py-2.5 text-white font-bold text-xs rounded-xl bg-amber-500 hover:bg-amber-600 flex items-center justify-center gap-2 transition-colors"
+                    >
+                        Devolución
+                    </button>
                   )}
-                  <button onClick={closeSaleDetail} className="w-full sm:w-auto px-4 sm:px-6 py-2 rounded-lg bg-gray-900 text-white font-bold text-xs sm:text-sm lg:text-base">Cerrar</button>
-                </div>
+                  <button 
+                      onClick={closeSaleDetail}
+                      className="flex-1 py-2.5 text-gray-600 font-medium text-xs rounded-xl border border-gray-200 bg-white hover:bg-gray-50 transition-colors"
+                  >
+                      Cerrar
+                  </button>
               </div>
-            </div>
+
+              {/* Close Button absolute top right */}
+              <button 
+                  onClick={closeSaleDetail}
+                  className="absolute top-4 right-4 p-2 text-gray-400 hover:text-gray-600 transition-colors rounded-full hover:bg-gray-100"
+              >
+                  <XIcon size={20} />
+              </button>
             </div>
           </div>
         </div>

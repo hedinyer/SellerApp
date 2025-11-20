@@ -46,6 +46,10 @@ interface DishStats {
   revenue: number
   category: string
   trend: 'up' | 'down' | 'stable'
+  sku?: string
+  imageUrl?: string
+  color?: string
+  size?: string
 }
 
 interface CustomerStats {
@@ -286,61 +290,163 @@ export function AdminDashboard() {
         setEmployeeStats(sellerStats)
 
         // Aggregate items sold for selected period for top/least dishes
-        const aggByKey = new Map<string, { name: string, sku?: string, quantity: number, revenue: number }>()
+        const aggByKey = new Map<string, { name: string, sku?: string, quantity: number, revenue: number, color?: string, size?: string }>()
         parsed.filter(s => new Date(s.created_at) >= startDate).forEach(s => {
           (s.items || []).forEach((it: any) => {
             const sku = it.sku as string | undefined
             const name = (it.name as string) || sku || 'Producto'
             const key = sku || name
-            const curr = aggByKey.get(key) || { name, sku, quantity: 0, revenue: 0 }
+            const curr = aggByKey.get(key) || { name, sku, quantity: 0, revenue: 0, color: it.color, size: it.size }
             const qty = Number(it.quantity) || 0
             const price = Number(it.unitPrice) || 0
             curr.quantity += qty
             curr.revenue += qty * price
+            // Keep first non-empty color and size
+            if (!curr.color && it.color) curr.color = it.color
+            if (!curr.size && it.size) curr.size = it.size
             aggByKey.set(key, curr)
           })
         })
 
-        // Fetch minimal garments meta by sku for category
-        let metaBySku = new Map<string, { category?: string }>()
+        // Fetch garments meta by sku for additional info
+        let metaBySku = new Map<string, { category?: string, image_url?: string, color?: string, size?: string }>()
         try {
           const skus = Array.from(aggByKey.values()).map(v => v.sku).filter(Boolean) as string[]
           if (skus.length) {
             const { data: garments } = await supabase
               .from('garments')
-              .select('sku, category')
+              .select('sku, category, image_url, color, size')
               .in('sku', Array.from(new Set(skus)))
             if (garments) {
-              metaBySku = new Map((garments as any[]).map(g => [g.sku as string, { category: g.category as string | undefined }]))
+              metaBySku = new Map((garments as any[]).map(g => [g.sku as string, { 
+                category: g.category as string | undefined,
+                image_url: g.image_url as string | undefined,
+                color: g.color as string | undefined,
+                size: g.size as string | undefined
+              }]))
             }
           }
         } catch {}
 
-        const dishes = Array.from(aggByKey.values()).map(v => ({
-          name: v.name,
-          orders: v.quantity,
-          revenue: Number(v.revenue),
-          category: (v.sku && metaBySku.get(v.sku)?.category) || 'General',
-          trend: 'stable' as const
-        }))
+        const dishes = Array.from(aggByKey.values()).map(v => {
+          const meta = v.sku ? metaBySku.get(v.sku) : undefined
+          return {
+            name: v.name,
+            orders: v.quantity,
+            revenue: Number(v.revenue),
+            category: meta?.category || 'General',
+            trend: 'stable' as const,
+            sku: v.sku,
+            imageUrl: meta?.image_url || undefined,
+            color: v.color || meta?.color || undefined,
+            size: v.size || meta?.size || undefined
+          }
+        })
 
-        // Ordenar por más vendidos (desc)
+        // Calcular promedio de ventas por categoría
+        const categoryStats = new Map<string, { totalOrders: number, productCount: number }>()
+        dishes.forEach(d => {
+          const cat = d.category || 'General'
+          const stats = categoryStats.get(cat) || { totalOrders: 0, productCount: 0 }
+          stats.totalOrders += d.orders
+          stats.productCount += 1
+          categoryStats.set(cat, stats)
+        })
+
+        const categoryAverages = new Map<string, number>()
+        categoryStats.forEach((stats, category) => {
+          const avg = stats.productCount > 0 ? stats.totalOrders / stats.productCount : 0
+          categoryAverages.set(category, avg)
+        })
+
+        // Oportunidades: productos con 0 ventas Y productos 50% por debajo del promedio de su categoría
+        // Crear un Set de claves de productos vendidos (usando la misma lógica que aggByKey: sku || name)
+        const soldProductKeys = new Set<string>()
+        dishes.forEach(d => {
+          const key = d.sku || d.name
+          soldProductKeys.add(key)
+        })
+
+        // Productos con ventas 50% por debajo del promedio de su categoría
+        const lowPerformingProducts: DishStats[] = dishes.filter(d => {
+          const category = d.category || 'General'
+          const categoryAvg = categoryAverages.get(category) || 0
+          // Si el promedio es 0, no considerar este producto como bajo rendimiento
+          if (categoryAvg === 0) return false
+          // 50% inferior significa que las ventas son menos del 50% del promedio
+          const threshold = categoryAvg * 0.5
+          return d.orders < threshold
+        })
+
+        // Obtener todos los productos disponibles de garments
+        let zeroSalesProducts: DishStats[] = []
+        try {
+          const { data: allGarments } = await supabase
+            .from('garments')
+            .select('sku, name, category, image_url, color, size')
+            .eq('status', 'activo')
+          
+          if (allGarments) {
+            // Filtrar productos que NO están en los vendidos (mostrar TODOS los productos con 0 ventas)
+            const productsWithZeroSales = allGarments
+              .filter((g: any) => {
+                const key = g.sku || g.name
+                return !soldProductKeys.has(key)
+              })
+            
+            zeroSalesProducts = productsWithZeroSales.map((g: any) => ({
+              name: g.name,
+              orders: 0,
+              revenue: 0,
+              category: g.category || 'General',
+              trend: 'stable' as const,
+              sku: g.sku,
+              imageUrl: g.image_url || undefined,
+              color: g.color || undefined,
+              size: g.size || undefined
+            }))
+          }
+        } catch {}
+
+        // Combinar productos con 0 ventas y productos con bajo rendimiento
+        // Evitar duplicados usando un Map por clave (sku || name)
+        const opportunitiesMap = new Map<string, DishStats>()
+        
+        // Agregar productos con 0 ventas
+        zeroSalesProducts.forEach(p => {
+          const key = p.sku || p.name
+          opportunitiesMap.set(key, p)
+        })
+        
+        // Agregar productos con bajo rendimiento (pueden sobrescribir si hay duplicado, pero estos tienen ventas > 0)
+        lowPerformingProducts.forEach(p => {
+          const key = p.sku || p.name
+          opportunitiesMap.set(key, p)
+        })
+        
+        const allOpportunities = Array.from(opportunitiesMap.values())
+
+        // Crear un Set de claves de productos en oportunidades para excluirlos de los más vendidos
+        const opportunitiesKeys = new Set<string>()
+        allOpportunities.forEach(p => {
+          const key = p.sku || p.name
+          opportunitiesKeys.add(key)
+        })
+
+        // Ordenar por más vendidos (desc) y excluir productos que están en oportunidades
         const sorted = dishes
-          .filter(d => d.orders > 0)
+          .filter(d => {
+            const key = d.sku || d.name
+            return d.orders > 0 && !opportunitiesKeys.has(key)
+          })
           .sort((a,b) => b.orders - a.orders)
 
-        // Top N sin repetir
+        // Top N sin repetir (excluyendo productos en oportunidades)
         const TOP_N = 5
-        const BOTTOM_N = 4
         const top = sorted.slice(0, TOP_N)
-        const topNames = new Set(top.map(d => d.name))
-
-        // Oportunidades: menos vendidos, excluyendo los top
-        const bottomCandidates = [...sorted].reverse().filter(d => !topNames.has(d.name))
-        const bottom = bottomCandidates.slice(0, BOTTOM_N)
 
         setTopDishes(top)
-        setLeastPopularDishes(bottom)
+        setLeastPopularDishes(allOpportunities)
       } catch (error) {
         console.error('Error recalculating by period:', error)
       }
@@ -484,23 +590,13 @@ export function AdminDashboard() {
             <div className="flex justify-center">
               <div className="w-full lg:w-64">
                 <SpotlightCard spotlightColor="rgba(0, 0, 0, 0.08)">
-                  <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-between config-font-medium metallic-bg" style={{ animationDelay: '0ms', boxShadow: `0 4px 16px 0 ${currentPeriodData.color}` }}>
+                  <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-center config-font-medium metallic-bg" style={{ animationDelay: '0ms', boxShadow: `0 4px 16px 0 ${currentPeriodData.color}` }}>
                     <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                    <div className="flex flex-col justify-between h-full relative z-10">
+                    <div className="flex flex-col justify-center h-full relative z-10">
                       <div className="flex flex-col items-center justify-center pt-1 pb-2">
                         <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">{currentPeriodData.title}</h3>
                         <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{formatCurrency(currentPeriodData.value)}</p>
                         <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">{currentPeriodData.subtitle}</p>
-                      </div>
-                      <div className="w-full px-2 h-10 xl:h-12 flex items-end">
-                        <ResponsiveContainer width="100%" height={48}>
-                          <LineChart data={currentPeriodData.chartData.map((d, i) => ({ ...d, label: currentPeriodData.labels[i] }))} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
-                            <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
-                            <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                            <YAxis hide />
-                            <Line type="monotone" dataKey="v" stroke={currentPeriodData.stroke} strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
-                          </LineChart>
-                        </ResponsiveContainer>
                       </div>
                     </div>
                   </div>
@@ -528,25 +624,13 @@ export function AdminDashboard() {
               {/* Total Servicios */}
               <div className="w-full">
                 <SpotlightCard spotlightColor={'rgba(59,130,246,0.08)' as `rgba(${number}, ${number}, ${number}, ${number})`}>
-                  <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-between metallic-bg" style={{ animationDelay: '0ms', boxShadow: '0 4px 16px 0 rgba(59,130,246,0.15)' }}>
+                  <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-center metallic-bg" style={{ animationDelay: '0ms', boxShadow: '0 4px 16px 0 rgba(59,130,246,0.15)' }}>
                     <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                    <div className="flex flex-col justify-between h-full relative z-10">
+                    <div className="flex flex-col justify-center h-full relative z-10">
                       <div className="flex flex-col items-center justify-center pt-1 pb-2">
                         <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">Total Servicios</h3>
                         <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{employeeStats.reduce((sum, emp) => sum + emp.servicesCount, 0)}</p>
                         <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">Atenciones completadas</p>
-                      </div>
-                      {/* Mini chart: simulate services per hour */}
-                      <div className="w-full px-2 h-10 xl:h-12 flex items-end">
-                        <ResponsiveContainer width="100%" height={48}>
-                          <LineChart data={[{v:5},{v:8},{v:7},{v:10},{v:9},{v:12},{v:11}].map((d, i) => ({ ...d, label: daysLabels[i] }))}
-                            margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
-                            <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
-                            <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                            <YAxis hide />
-                            <Line type="monotone" dataKey="v" stroke="#3b82f6" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
-                          </LineChart>
-                        </ResponsiveContainer>
                       </div>
                     </div>
                   </div>
@@ -555,25 +639,13 @@ export function AdminDashboard() {
               {/* Ticket Promedio Hoy */}
               <div className="w-full">
                 <SpotlightCard spotlightColor={'rgba(16,185,129,0.08)' as `rgba(${number}, ${number}, ${number}, ${number})`}>
-                  <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-between metallic-bg" style={{ animationDelay: '100ms', boxShadow: '0 4px 16px 0 rgba(16,185,129,0.15)' }}>
+                  <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-center metallic-bg" style={{ animationDelay: '100ms', boxShadow: '0 4px 16px 0 rgba(16,185,129,0.15)' }}>
                     <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                    <div className="flex flex-col justify-between h-full relative z-10">
+                    <div className="flex flex-col justify-center h-full relative z-10">
                       <div className="flex flex-col items-center justify-center pt-1 pb-2">
                         <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">Ticket Promedio</h3>
                         <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{formatCurrency(averageTicketForPeriod)}</p>
                         <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">{selectedPeriod.charAt(0).toUpperCase() + selectedPeriod.slice(1)}</p>
-                      </div>
-                      {/* Mini chart: promedio del día */}
-                      <div className="w-full px-2 h-10 xl:h-12 flex items-end">
-                        <ResponsiveContainer width="100%" height={48}>
-                          <LineChart data={chartDataAvgTicketToday.map((d, i) => ({ ...d, label: daysLabels[i] }))}
-                            margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
-                            <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
-                            <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                            <YAxis hide />
-                            <Line type="monotone" dataKey="v" stroke="#10b981" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
-                          </LineChart>
-                        </ResponsiveContainer>
                       </div>
                     </div>
                   </div>
@@ -582,28 +654,16 @@ export function AdminDashboard() {
               {/* Ventas Generadas */}
               <div className="w-full">
                 <SpotlightCard spotlightColor={'rgba(168,85,247,0.08)' as `rgba(${number}, ${number}, ${number}, ${number})`}>
-                  <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-between metallic-bg" style={{ animationDelay: '200ms', boxShadow: '0 4px 16px 0 rgba(168,85,247,0.15)' }}>
+                  <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-center metallic-bg" style={{ animationDelay: '200ms', boxShadow: '0 4px 16px 0 rgba(168,85,247,0.15)' }}>
                     <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                    <div className="flex flex-col justify-between h-full relative z-10">
+                    <div className="flex flex-col justify-center h-full relative z-10">
                       <div className="flex flex-col items-center justify-center pt-1 pb-2">
                         <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">Ventas Generadas</h3>
                         <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{formatCurrency(employeeStats.reduce((sum, emp) => sum + emp.sales, 0))}</p>
                         <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">Por el equipo</p>
                       </div>
-                      {/* Mini chart: simulate sales per hour */}
-                      <div className="w-full px-2 h-10 xl:h-12 flex items-end">
-                        <ResponsiveContainer width="100%" height={48}>
-                          <LineChart data={[{v:200},{v:350},{v:300},{v:400},{v:370},{v:420},{v:410}].map((d, i) => ({ ...d, label: daysLabels[i] }))}
-                            margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
-                            <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
-                            <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                            <YAxis hide />
-                            <Line type="monotone" dataKey="v" stroke="#a855f7" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      </div>
                     </div>
-              </div>
+                  </div>
                 </SpotlightCard>
               </div>
             </div>
@@ -625,76 +685,44 @@ export function AdminDashboard() {
             <div className="p-4 h-[400px] overflow-y-auto kitchen-scrollbar">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {employeeStats.map((employee, index) => {
-                  // Simular datos de rendimiento en el tiempo (últimos 7 días)
-                  const days = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
-                  const performanceData = days.map((day, i) => ({
-                    day,
-                    servicios: Math.max(0, Math.round(employee.servicesCount * (0.7 + 0.6 * Math.random()) / 7)),
-                    propinas: +(employee.totalTips * (0.7 + 0.6 * Math.random()) / 7).toFixed(2),
-                    ventas: +(employee.sales * (0.7 + 0.6 * Math.random()) / 7).toFixed(2)
-                  }))
                   return (
-                    <div key={employee.id} className="bg-white border border-gray-200 rounded-xl shadow p-2 md:p-3 hover:shadow-md transition-all duration-200 flex flex-col gap-2 md:gap-3">
-                      {/* Avatar e info principal */}
-                      <div className="flex flex-col md:flex-row md:items-center gap-2 md:gap-3">
-                        <div className="flex-shrink-0 flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-br from-blue-100 to-blue-300 text-blue-800 font-bold text-base shadow-inner">
+                    <div key={employee.id} className="bg-white border border-gray-200 rounded-xl p-4 transition-all duration-200 flex flex-col gap-4">
+                      {/* Header con Avatar y Nombre */}
+                      <div className="flex items-center gap-3 pb-3 border-b border-gray-100">
+                        <div className="flex-shrink-0 flex items-center justify-center w-12 h-12 rounded-full bg-gradient-to-br from-blue-100 to-blue-300 text-blue-800 font-bold text-lg shadow-inner">
                           {employee.name.split(' ').map(n => n[0]).join('').slice(0,2)}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-0.5">
-                            <div>
-                              <h4 className="font-semibold text-gray-900 text-sm md:text-base leading-tight">{employee.name}</h4>
-                              <p className="text-[11px] text-gray-500 leading-tight">{employee.role}</p>
-                            </div>
-                            <div className="flex items-center gap-1 mt-0.5 md:mt-0">
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[11px] font-medium">Ticket: {formatCurrency(employee.avgTicket || 0)}</span>
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 text-[11px] font-medium">Items: {employee.itemsSold || 0}</span>
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 text-[11px] font-medium">{formatCurrency(employee.sales)}</span>
-                            </div>
-                      </div>
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            <span className="bg-gray-100 text-gray-700 rounded px-1.5 py-0.5 text-[11px]">Servicios: <b>{employee.servicesCount}</b></span>
-                      </div>
-                    </div>
-                      </div>
-                      {/* Gráficas de rendimiento */}
-                      <div className="flex flex-row gap-2 mt-2 w-full">
-                        {/* Servicios */}
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[10px] text-gray-500 text-center mb-0.5">Servicios</div>
-                          <ResponsiveContainer width="100%" height={48}>
-                            <LineChart data={performanceData} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
-                              <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
-                              <XAxis dataKey="day" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} label={{ value: 'Día', position: 'insideBottom', offset: -2, fontSize: 9 }} />
-                              <YAxis hide />
-                              <Line type="monotone" dataKey="servicios" stroke="#3b82f6" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
-                            </LineChart>
-                          </ResponsiveContainer>
+                          <h4 className="font-semibold text-gray-900 text-base md:text-lg leading-tight">{employee.name}</h4>
+                          <p className="text-xs text-gray-500 leading-tight mt-0.5">{employee.role}</p>
                         </div>
+                      </div>
+
+                      {/* Métricas principales en grid */}
+                      <div className="grid grid-cols-3 gap-3">
                         {/* Ticket Promedio */}
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[10px] text-gray-500 text-center mb-0.5">Ticket Promedio</div>
-                          <ResponsiveContainer width="100%" height={48}>
-                            <LineChart data={performanceData.map(d => ({ ...d, ticket: (employee.avgTicket || 0) * (0.9 + Math.random()*0.2) }))} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
-                              <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
-                              <XAxis dataKey="day" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} label={{ value: 'Día', position: 'insideBottom', offset: -2, fontSize: 9 }} />
-                              <YAxis hide />
-                              <Line type="monotone" dataKey="ticket" stroke="#10b981" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
-                            </LineChart>
-                          </ResponsiveContainer>
-                      </div>
+                        <div className="bg-white rounded-lg p-3 border border-gray-200">
+                          <div className="text-[10px] font-medium text-gray-600 uppercase tracking-wide mb-1">Ticket Promedio</div>
+                          <div className="text-base md:text-lg font-bold text-gray-900 leading-tight">{formatCurrency(employee.avgTicket || 0)}</div>
+                        </div>
+
                         {/* Items Vendidos */}
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[10px] text-gray-500 text-center mb-0.5">Items Vendidos</div>
-                          <ResponsiveContainer width="100%" height={48}>
-                            <LineChart data={performanceData.map(d => ({ ...d, items: Math.max(0, Math.round((employee.itemsSold || 0)/7 * (0.8 + Math.random()*0.4))) }))} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
-                              <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
-                              <XAxis dataKey="day" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} label={{ value: 'Día', position: 'insideBottom', offset: -2, fontSize: 9 }} />
-                              <YAxis hide />
-                              <Line type="monotone" dataKey="items" stroke="#f59e42" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
-                            </LineChart>
-                          </ResponsiveContainer>
+                        <div className="bg-white rounded-lg p-3 border border-gray-200">
+                          <div className="text-[10px] font-medium text-gray-600 uppercase tracking-wide mb-1">Items Vendidos</div>
+                          <div className="text-base md:text-lg font-bold text-gray-900 leading-tight">{employee.itemsSold || 0}</div>
+                        </div>
+
+                        {/* Ventas Totales */}
+                        <div className="bg-white rounded-lg p-3 border border-gray-200">
+                          <div className="text-[10px] font-medium text-gray-600 uppercase tracking-wide mb-1">Ventas Totales</div>
+                          <div className="text-base md:text-lg font-bold text-gray-900 leading-tight">{formatCurrency(employee.sales)}</div>
+                        </div>
                       </div>
+
+                      {/* Servicios */}
+                      <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+                        <span className="text-xs font-medium text-gray-600 uppercase tracking-wide">Servicios Completados</span>
+                        <span className="text-lg font-bold text-gray-900">{employee.servicesCount}</span>
                       </div>
                     </div>
                   )
@@ -714,33 +742,71 @@ export function AdminDashboard() {
               </p>
             </div>
             <div className="p-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {topDishes.map((dish, index) => {
-                  // Simular datos de pedidos de la semana para el chart
-                  const dishOrdersWeek = [
-                    { day: 'Lun', v: Math.round(dish.orders * (0.12 + Math.random() * 0.1)) },
-                    { day: 'Mar', v: Math.round(dish.orders * (0.13 + Math.random() * 0.1)) },
-                    { day: 'Mié', v: Math.round(dish.orders * (0.14 + Math.random() * 0.1)) },
-                    { day: 'Jue', v: Math.round(dish.orders * (0.15 + Math.random() * 0.1)) },
-                    { day: 'Vie', v: Math.round(dish.orders * (0.16 + Math.random() * 0.1)) },
-                    { day: 'Sáb', v: Math.round(dish.orders * (0.18 + Math.random() * 0.1)) },
-                    { day: 'Dom', v: Math.round(dish.orders * (0.12 + Math.random() * 0.1)) },
-                  ];
                   return (
-                    <div key={index} className="flex flex-col sm:flex-row items-stretch justify-between p-3 rounded-xl transition-all border border-green-100 bg-white shadow-sm min-h-[84px]">
-                      {/* Izquierda: Nombre, categoría, ranking */}
-                      <div className="flex flex-row items-center min-w-0 flex-1 gap-3">
-                        <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center mr-2 flex-shrink-0 text-base font-bold text-green-700">#{index + 1}</div>
-                        <div className="min-w-0 flex-1">
-                          <h4 className="font-semibold text-gray-900 text-base truncate leading-tight">{dish.name}</h4>
-                          <p className="text-xs text-green-700 font-medium mt-0.5">{dish.category}</p>
-                        </div>
+                    <div key={index} className="flex flex-row items-stretch gap-4 p-4 rounded-xl transition-all border border-gray-200 bg-white hover:border-gray-300">
+                      {/* Imagen del producto */}
+                      <div className="flex-shrink-0">
+                        {dish.imageUrl ? (
+                          <img 
+                            src={dish.imageUrl} 
+                            alt={dish.name}
+                            className="w-20 h-20 md:w-24 md:h-24 object-cover rounded-lg border border-gray-200"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3Crect fill="%23f3f4f6" width="100" height="100"/%3E%3Ctext x="50%25" y="50%25" dominant-baseline="middle" text-anchor="middle" fill="%239ca3af" font-size="12"%3ESin imagen%3C/text%3E%3C/svg%3E'
+                            }}
+                          />
+                        ) : (
+                          <div className="w-20 h-20 md:w-24 md:h-24 bg-gray-100 rounded-lg border border-gray-200 flex items-center justify-center">
+                            <span className="text-xs text-gray-400 text-center px-2">Sin imagen</span>
+                          </div>
+                        )}
                       </div>
-                      {/* Derecha: Pedidos y revenue */}
-                      <div className="flex flex-col items-end justify-center min-w-[70px] gap-1 sm:ml-4">
-                        <span className="text-lg font-bold text-green-700 leading-tight">{dish.orders}</span>
-                        <span className="text-xs text-gray-500">pedidos</span>
-                        <span className="text-xs text-green-600 font-semibold">{formatCurrency(dish.revenue)}</span>
+
+                      {/* Información del producto */}
+                      <div className="flex-1 min-w-0 flex flex-col justify-between">
+                        <div>
+                          {/* Ranking y nombre */}
+                          <div className="flex items-start gap-2 mb-2">
+                            <div className="w-6 h-6 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold text-green-700">#{index + 1}</div>
+                            <div className="flex-1 min-w-0">
+                              <h4 className="font-semibold text-gray-900 text-base md:text-lg truncate leading-tight">{dish.name}</h4>
+                              <p className="text-xs text-gray-600 font-medium mt-0.5">{dish.category}</p>
+                            </div>
+                          </div>
+
+                          {/* SKU, Color, Talla */}
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            {dish.sku && (
+                              <span className="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-700 text-xs font-medium">
+                                SKU: {dish.sku}
+                              </span>
+                            )}
+                            {dish.color && (
+                              <span className="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-700 text-xs font-medium">
+                                Color: {dish.color}
+                              </span>
+                            )}
+                            {dish.size && (
+                              <span className="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-700 text-xs font-medium">
+                                Talla: {dish.size}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Pedidos y revenue */}
+                        <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
+                          <div className="flex flex-col">
+                            <span className="text-2xl font-bold text-gray-900 leading-tight">{dish.orders}</span>
+                            <span className="text-xs text-gray-500">pedidos</span>
+                          </div>
+                          <div className="flex flex-col items-end">
+                            <span className="text-lg font-bold text-green-600 leading-tight">{formatCurrency(dish.revenue)}</span>
+                            <span className="text-xs text-gray-500">total</span>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   )
@@ -756,35 +822,91 @@ export function AdminDashboard() {
                 <h3 className="text-sm font-medium text-gray-800 text-center">Oportunidades</h3>
               </div>
               <p className="text-xs text-gray-600 mt-1 text-center">
-                Productos con menor demanda - {selectedPeriod.charAt(0).toUpperCase() + selectedPeriod.slice(1)}
+                Productos con 0 ventas o 50% por debajo del promedio de su categoría - {selectedPeriod.charAt(0).toUpperCase() + selectedPeriod.slice(1)}
               </p>
             </div>
             <div className="p-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {leastPopularDishes.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-sm text-gray-500">🎉 ¡Excelente! Todos los productos tienen ventas adecuadas en este período.</p>
+                </div>
+              ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {leastPopularDishes.map((dish, index) => (
-                  <div key={index} className="flex flex-col sm:flex-row items-stretch justify-between p-3 rounded-xl transition-all border border-orange-100 bg-white shadow-sm min-h-[84px]">
-                    {/* Izquierda: Ranking, nombre, categoría */}
-                    <div className="flex flex-row items-center min-w-0 flex-1 gap-3">
-                      <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center mr-2 flex-shrink-0 text-base font-bold text-orange-700">⚠️</div>
-                      <div className="min-w-0 flex-1">
-                        <h4 className="font-semibold text-gray-900 text-base truncate leading-tight">{dish.name}</h4>
-                        <p className="text-xs text-orange-700 font-medium mt-0.5">{dish.category}</p>
-                      </div>
+                  <div key={index} className="flex flex-row items-stretch gap-4 p-4 rounded-xl transition-all border border-gray-200 bg-white hover:border-gray-300">
+                    {/* Imagen del producto */}
+                    <div className="flex-shrink-0">
+                      {dish.imageUrl ? (
+                        <img 
+                          src={dish.imageUrl} 
+                          alt={dish.name}
+                          className="w-20 h-20 md:w-24 md:h-24 object-cover rounded-lg border border-gray-200"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3Crect fill="%23f3f4f6" width="100" height="100"/%3E%3Ctext x="50%25" y="50%25" dominant-baseline="middle" text-anchor="middle" fill="%239ca3af" font-size="12"%3ESin imagen%3C/text%3E%3C/svg%3E'
+                          }}
+                        />
+                      ) : (
+                        <div className="w-20 h-20 md:w-24 md:h-24 bg-gray-100 rounded-lg border border-gray-200 flex items-center justify-center">
+                          <span className="text-xs text-gray-400 text-center px-2">Sin imagen</span>
+                        </div>
+                      )}
                     </div>
-                    {/* Derecha: Pedidos y revenue */}
-                    <div className="flex flex-col items-end justify-center min-w-[70px] gap-1 sm:ml-4">
-                      <span className="text-lg font-bold text-orange-700 leading-tight">{dish.orders}</span>
-                      <span className="text-xs text-gray-500">pedidos</span>
-                      <span className="text-xs text-red-600 font-semibold">{formatCurrency(dish.revenue)}</span>
+
+                    {/* Información del producto */}
+                    <div className="flex-1 min-w-0 flex flex-col justify-between">
+                      <div>
+                        {/* Ranking y nombre */}
+                        <div className="flex items-start gap-2 mb-2">
+                          <div className="w-6 h-6 bg-orange-100 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold text-orange-700">⚠️</div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-semibold text-gray-900 text-base md:text-lg truncate leading-tight">{dish.name}</h4>
+                            <p className="text-xs text-gray-600 font-medium mt-0.5">{dish.category}</p>
+                          </div>
+                        </div>
+
+                        {/* SKU, Color, Talla */}
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {dish.sku && (
+                            <span className="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-700 text-xs font-medium">
+                              SKU: {dish.sku}
+                            </span>
+                          )}
+                          {dish.color && (
+                            <span className="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-700 text-xs font-medium">
+                              Color: {dish.color}
+                            </span>
+                          )}
+                          {dish.size && (
+                            <span className="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-700 text-xs font-medium">
+                              Talla: {dish.size}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Pedidos y revenue */}
+                      <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
+                        <div className="flex flex-col">
+                          <span className="text-2xl font-bold text-red-600 leading-tight">{dish.orders}</span>
+                          <span className="text-xs text-gray-500">ventas</span>
+                        </div>
+                        <div className="flex flex-col items-end">
+                          <span className="text-lg font-bold text-red-600 leading-tight">{formatCurrency(dish.revenue)}</span>
+                          <span className="text-xs text-gray-500">total</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 ))}
               </div>
+              )}
+              {leastPopularDishes.length > 0 && (
               <div className="mt-4 p-3 bg-orange-50 rounded border border-orange-100">
                 <p className="text-xs text-orange-700">
-                  💡 <strong>Sugerencia:</strong> Considera promociones especiales.
+                  💡 <strong>Sugerencia:</strong> Considera promociones especiales para estos productos.
                 </p>
               </div>
+              )}
             </div>
           </div>
         </div>

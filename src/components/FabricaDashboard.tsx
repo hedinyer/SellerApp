@@ -27,10 +27,8 @@ export function FabricaDashboard() {
   const [pendingQuotes, setPendingQuotes] = useState(0)
   const [approvedQuotes, setApprovedQuotes] = useState(0)
   const [rejectedQuotes, setRejectedQuotes] = useState(0)
-  const [convertedQuotes, setConvertedQuotes] = useState(0)
   const [totalQuotesValue, setTotalQuotesValue] = useState(0)
   const [approvedQuotesValue, setApprovedQuotesValue] = useState(0)
-  const [convertedQuotesValue, setConvertedQuotesValue] = useState(0)
   const [quotesToday, setQuotesToday] = useState(0)
   const [quotesWeek, setQuotesWeek] = useState(0)
   const [productionOrdersTotal, setProductionOrdersTotal] = useState(0)
@@ -43,7 +41,7 @@ export function FabricaDashboard() {
   const [quotesHistory, setQuotesHistory] = useState<{ date: string, total: number, approved: number }[]>([])
   
   // Datos históricos diarios para las gráficas
-  const [quotesHistoryDaily, setQuotesHistoryDaily] = useState<{ date: string, total: number, pending: number, approved: number, converted: number, rejected: number, today: number, week: number }[]>([])
+  const [quotesHistoryDaily, setQuotesHistoryDaily] = useState<{ date: string, total: number, pending: number, approved: number, rejected: number, today: number, week: number }[]>([])
   const [productionHistoryDaily, setProductionHistoryDaily] = useState<{ date: string, total: number, received: number, inProcess: number, finished: number, onWay: number, delivered: number }[]>([])
 
   useEffect(() => {
@@ -146,11 +144,6 @@ export function FabricaDashboard() {
             return estado === 'rechazada' || estado === 'rejected'
           }).length)
           
-          setConvertedQuotes(quotesData.filter((q: any) => {
-            const estado = (q.estado || '').toLowerCase()
-            return estado === 'convertida' || estado === 'converted'
-          }).length)
-          
           // Valores de cotizaciones
           const totalValue = quotesData.reduce((sum: number, q: any) => sum + (Number(q.total) || 0), 0)
           setTotalQuotesValue(totalValue)
@@ -162,14 +155,6 @@ export function FabricaDashboard() {
             })
             .reduce((sum: number, q: any) => sum + (Number(q.total) || 0), 0)
           setApprovedQuotesValue(approvedValue)
-          
-          const convertedValue = quotesData
-            .filter((q: any) => {
-              const estado = (q.estado || '').toLowerCase()
-              return estado === 'convertida' || estado === 'converted'
-            })
-            .reduce((sum: number, q: any) => sum + (Number(q.total) || 0), 0)
-          setConvertedQuotesValue(convertedValue)
           
           // Cotizaciones del día y semana
           const quotesTodayCount = quotesData.filter((q: any) => {
@@ -218,7 +203,6 @@ export function FabricaDashboard() {
               const e = (estado || '').toLowerCase()
               if (e === 'pendiente' || e === 'pending' || !estado) return 'pending'
               if (e === 'aprobada' || e === 'approved') return 'approved'
-              if (e === 'convertida' || e === 'converted') return 'converted'
               if (e === 'rechazada' || e === 'rejected') return 'rejected'
               return 'other'
             }
@@ -232,7 +216,6 @@ export function FabricaDashboard() {
               total: dayQuotes.length,
               pending: dayQuotes.filter((q: any) => getEstado(q.estado) === 'pending').length,
               approved: dayQuotes.filter((q: any) => getEstado(q.estado) === 'approved').length,
-              converted: dayQuotes.filter((q: any) => getEstado(q.estado) === 'converted').length,
               rejected: dayQuotes.filter((q: any) => getEstado(q.estado) === 'rejected').length,
               today: isToday ? dayQuotes.length : 0,
               week: isInWeek ? dayQuotes.length : 0
@@ -361,13 +344,6 @@ export function FabricaDashboard() {
     }))
   }, [quotesHistoryDaily])
 
-  const chartDataConvertedQuotes = useMemo(() => {
-    if (!quotesHistoryDaily || quotesHistoryDaily.length === 0) return []
-    return quotesHistoryDaily.map((d, i) => ({
-      v: d.converted,
-      label: formatDateLabel(d.date, i, quotesHistoryDaily.length)
-    }))
-  }, [quotesHistoryDaily])
 
   const chartDataQuotesToday = useMemo(() => {
     if (!quotesHistoryDaily || quotesHistoryDaily.length === 0) return []
@@ -483,7 +459,7 @@ export function FabricaDashboard() {
             {/* Sección Cotizaciones */}
             <div className="mb-6">
               <h4 className="text-sm font-semibold text-gray-800 mb-3 uppercase tracking-wide">Cotizaciones</h4>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 lg:gap-4">
                 {/* Total */}
                 <div className="w-full">
                   <SpotlightCard spotlightColor="rgba(0, 0, 0, 0.08)">
@@ -552,31 +528,6 @@ export function FabricaDashboard() {
                               <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
                               <YAxis hide />
                               <Line type="monotone" dataKey="v" stroke="#fb923c" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
-                            </LineChart>
-                          </ResponsiveContainer>
-                        </div>
-                      </div>
-                    </div>
-                  </SpotlightCard>
-                </div>
-                {/* Convertidas */}
-                <div className="w-full">
-                  <SpotlightCard spotlightColor="rgba(0, 0, 0, 0.08)">
-                    <div className="rounded-2xl px-4 py-4 shadow-2xl animate-slideInUp relative overflow-hidden h-28 xl:h-36 flex flex-col justify-between config-font-medium metallic-bg" style={{ animationDelay: '300ms', boxShadow: '0 4px 16px 0 rgba(168,85,247,0.15)' }}>
-                      <div className="absolute inset-0 pointer-events-none metallic-shine" />
-                      <div className="flex flex-col justify-between h-full relative z-10">
-                        <div className="flex flex-col items-center justify-center pt-1 pb-2">
-                          <h3 className="font-semibold text-black text-xs lg:text-sm mb-1 tracking-wide uppercase opacity-80 text-center w-full">Convertidas</h3>
-                          <p className="text-3xl lg:text-4xl xl:text-5xl font-semibold text-black leading-tight" style={{ fontFamily: 'Helvetica Neue' }}>{formatThousands(convertedQuotes)}</p>
-                          <p className="text-[10px] lg:text-xs font-normal text-black/70 leading-tight mt-1">{formatCurrency(convertedQuotesValue)}</p>
-                        </div>
-                        <div className="w-full px-2 h-10 xl:h-12 flex items-end">
-                          <ResponsiveContainer width="100%" height={48}>
-                            <LineChart data={chartDataConvertedQuotes} margin={{ left: 0, right: 0, top: 4, bottom: 4 }}>
-                              <CartesianGrid stroke="#e0e7ef" strokeOpacity={0.13} vertical={false} />
-                              <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                              <YAxis hide />
-                              <Line type="monotone" dataKey="v" stroke="#a855f7" strokeWidth={1.5} dot={{ r: 2 }} isAnimationActive={true} />
                             </LineChart>
                           </ResponsiveContainer>
                         </div>

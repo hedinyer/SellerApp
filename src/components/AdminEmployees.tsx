@@ -57,6 +57,121 @@ export function AdminEmployees() {
   const [isSavingNew, setIsSavingNew] = useState(false)
   const [isSavingEdit, setIsSavingEdit] = useState(false)
   const { formatCurrency } = useConfig()
+  
+  // Estado para estadísticas de vendedor real
+  const [employeeStats, setEmployeeStats] = useState<{
+    totalSales: number
+    salesCount: number
+    totalQuotes: number
+    quotesCount: number
+    convertedQuotes: number
+    conversionRate: number
+    chartData: any[]
+  }>({
+    totalSales: 0,
+    salesCount: 0,
+    totalQuotes: 0,
+    quotesCount: 0,
+    convertedQuotes: 0,
+    conversionRate: 0,
+    chartData: []
+  })
+
+  // Cargar estadísticas reales si el empleado seleccionado es Vendedor
+  useEffect(() => {
+    if (!selectedEmployee || (selectedEmployee.position !== 'Vendedor' && selectedEmployee.position !== 'Ventas')) return
+
+    async function fetchEmployeeStats() {
+      try {
+        // 1. Obtener Ventas
+        const { data: salesData, error: salesError } = await supabase
+          .from('sales')
+          .select('id, total, created_at')
+          .eq('seller', selectedEmployee?.name)
+          .order('created_at', { ascending: true })
+        
+        if (salesError) console.error('Error fetching sales:', salesError)
+
+        // 2. Obtener Cotizaciones
+        const { data: quotesData, error: quotesError } = await supabase
+          .from('cotizaciones')
+          .select('id, total, estado, created_at')
+          .eq('seller', selectedEmployee?.name)
+          .order('created_at', { ascending: true })
+
+        if (quotesError) console.error('Error fetching quotes:', quotesError)
+
+        const sales = salesData || []
+        const quotes = quotesData || []
+
+        // Calcular totales
+        const totalSales = sales.reduce((sum, sale) => sum + (Number(sale.total) || 0), 0)
+        const salesCount = sales.length
+        
+        const totalQuotes = quotes.reduce((sum, quote) => sum + (Number(quote.total) || 0), 0)
+        const quotesCount = quotes.length
+        const convertedQuotes = quotes.filter(q => q.estado === 'aprobada' || q.estado === 'convertida').length
+        const conversionRate = quotesCount > 0 ? (convertedQuotes / quotesCount) * 100 : 0
+
+        // Generar datos para gráficos (agrupados por mes)
+        const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+        const currentYear = new Date().getFullYear()
+        
+        // Inicializar datos de los últimos 6 meses
+        const chartMap = new Map()
+        for (let i = 5; i >= 0; i--) {
+          const d = new Date()
+          d.setMonth(d.getMonth() - i)
+          const key = `${d.getFullYear()}-${d.getMonth()}`
+          chartMap.set(key, {
+            month: monthNames[d.getMonth()],
+            fullDate: d,
+            ventas: 0,
+            cotizaciones: 0,
+            conversion: 0
+          })
+        }
+
+        // Llenar con ventas
+        sales.forEach(sale => {
+          const d = new Date(sale.created_at)
+          const key = `${d.getFullYear()}-${d.getMonth()}`
+          if (chartMap.has(key)) {
+            const entry = chartMap.get(key)
+            entry.ventas += Number(sale.total) || 0
+          }
+        })
+
+        // Llenar con cotizaciones
+        quotes.forEach(quote => {
+          const d = new Date(quote.created_at)
+          const key = `${d.getFullYear()}-${d.getMonth()}`
+          if (chartMap.has(key)) {
+            const entry = chartMap.get(key)
+            entry.cotizaciones += Number(quote.total) || 0 // Suma monto cotizado
+            // Podríamos contar cantidad también
+          }
+        })
+
+        const chartData = Array.from(chartMap.values())
+
+        setEmployeeStats({
+          totalSales,
+          salesCount,
+          totalQuotes,
+          quotesCount,
+          convertedQuotes,
+          conversionRate,
+          chartData
+        })
+
+      } catch (err) {
+        console.error('Error loading employee stats:', err)
+      }
+    }
+
+    fetchEmployeeStats()
+  }, [selectedEmployee])
 
   // Cargar datos del empleado cuando se edita
   useEffect(() => {
@@ -192,14 +307,15 @@ export function AdminEmployees() {
   }
 
   return (
-    <div className="w-screen h-screen min-h-screen min-w-screen p-4 lg:p-6 overflow-auto">
-      {/* Header */}
-      <div className="mb-6 lg:mb-8 animate-fadeInSlide">
-        
-        <p className="text-gray-600 font-medium text-sm lg:text-base">
-          Administra el personal de la tienda y fábrica y sus datos
-        </p>
-      </div>
+    <div className="min-h-screen bg-gray-50">
+      <div className="p-4 lg:p-6">
+        {/* Header */}
+        <div className="mb-6 lg:mb-8 animate-fadeInSlide">
+          <h1 className="text-lg lg:text-xl font-bold text-gray-900">Gestión de Empleados</h1>
+          <p className="text-xs lg:text-sm text-gray-600 font-normal mt-1">
+            Administra el personal de la tienda y fábrica y sus datos
+          </p>
+        </div>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 lg:flex lg:justify-center gap-3 lg:gap-4 mb-6 lg:mb-8 max-w-4xl mx-auto">
@@ -261,63 +377,75 @@ export function AdminEmployees() {
         </div>
       </div>
 
-      {/* Employees Table */}
-      <div className="bg-white rounded-[8px] border border-gray-300 shadow-sm overflow-hidden mr-6 lg:mr-8">
-        {/* Header and Controls */}
-        <div className="p-4 border-b border-gray-100">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-            <div>
-              <h3 className="font-semibold text-gray-800">Lista de Empleados</h3>
-              <p className="text-sm text-gray-600 mt-1">
-                {filteredEmployees.length} de {employees.length} empleados
-              </p>
+      {/* Filters and Search */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm mb-4 sm:mb-6 lg:mb-8 p-4">
+        <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 items-stretch sm:items-center">
+          {/* Search */}
+          <div className="flex-1 w-full sm:w-auto min-w-0">
+            <div className="relative">
+              <SearchIcon size={18} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Buscar empleados..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 bg-white text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+              />
             </div>
-            {/* Controls: Search, Filters, Add */}
-            <div className="flex flex-col lg:flex-row gap-2 items-start lg:items-center">
-              {/* Search */}
-              <div className="relative w-full lg:w-56">
-                <SearchIcon size={18} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Buscar empleados..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 bg-white text-black border border-gray-200 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                />
-              </div>
-              {/* Filters */}
+          </div>
+          {/* Filters */}
+          <div className="w-full sm:w-auto sm:min-w-[12rem]">
+            <div className="relative">
+              <FilterIcon size={18} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
               <select
                 value={filterStatus}
                 onChange={(e) => setFilterStatus(e.target.value as any)}
-                className="px-3 py-2 bg-white text-black border border-gray-200 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm appearance-none bg-white text-gray-900"
               >
                 <option value="todos">Todos los estados</option>
                 <option value="activo">Activos</option>
                 <option value="inactivo">Inactivos</option>
               </select>
+            </div>
+          </div>
+          <div className="w-full sm:w-auto sm:min-w-[12rem]">
+            <div className="relative">
+              <FilterIcon size={18} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
               <select
                 value={filterPosition}
                 onChange={(e) => setFilterPosition(e.target.value)}
-                className="px-3 py-2 bg-white text-black border border-gray-200 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm appearance-none bg-white text-gray-900"
               >
                 <option value="todos">Todas las posiciones</option>
                 {uniquePositions.map(position => (
                   <option key={position} value={position}>{position}</option>
                 ))}
               </select>
-              {/* Add Employee */}
-              <button
-                onClick={() => setIsAddingEmployee(true)}
-                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors flex items-center gap-2"
-              >
-                <PlusIcon size={16} />
-                Agregar Empleado
-              </button>
             </div>
           </div>
+          {/* Add Employee */}
+          <button
+            onClick={() => setIsAddingEmployee(true)}
+            className="w-full sm:w-auto sm:flex-shrink-0 px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-2 text-sm font-medium whitespace-nowrap"
+          >
+            <PlusIcon size={16} />
+            Agregar Empleado
+          </button>
         </div>
+      </div>
 
-        <div className="overflow-x-auto">
+      {/* Employees Table */}
+      <div className="bg-white rounded-xl sm:rounded-[15px] border border-gray-200 shadow-sm mb-4 sm:mb-6 lg:mb-8 overflow-hidden">
+        <div className="p-4 lg:p-6">
+          {/* Header */}
+          <div className="mb-4">
+            <h2 className="text-base lg:text-lg font-semibold text-gray-900">Lista de Empleados</h2>
+            <p className="text-xs lg:text-sm text-gray-600 mt-1">
+              {filteredEmployees.length} de {employees.length} empleados
+            </p>
+          </div>
+
+          <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-gray-50">
               <tr>
@@ -401,10 +529,27 @@ export function AdminEmployees() {
                         <EditIcon size={16} />
                       </button>
                       <button
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.stopPropagation()
                           if (confirm(`¿Estás seguro de que quieres eliminar a ${employee.name}?`)) {
-                            setEmployees(prev => prev.filter(emp => emp.id !== employee.id))
+                            try {
+                              const { error } = await supabase
+                                .from('employees')
+                                .delete()
+                                .eq('id', employee.id)
+                              
+                              if (error) {
+                                console.error('Error al eliminar empleado:', error)
+                                alert(`Error al eliminar el empleado: ${error.message}`)
+                                return
+                              }
+                              
+                              // Eliminar del estado local solo si la eliminación fue exitosa
+                              setEmployees(prev => prev.filter(emp => emp.id !== employee.id))
+                            } catch (err: any) {
+                              console.error('Error al eliminar empleado:', err)
+                              alert(`Error al eliminar el empleado: ${err?.message || 'Error desconocido'}`)
+                            }
                           }
                         }}
                         className="text-red-600 hover:text-red-900 p-1 rounded hover:bg-red-50"
@@ -426,6 +571,7 @@ export function AdminEmployees() {
               <p className="text-gray-500">Intenta ajustar tus filtros de búsqueda</p>
             </div>
           )}
+          </div>
         </div>
       </div>
 
@@ -542,6 +688,34 @@ export function AdminEmployees() {
               <div className="mb-6">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">Métricas de Rendimiento</h3>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  {(selectedEmployee.position.toLowerCase().includes('vendedor') || selectedEmployee.position.toLowerCase().includes('ventas')) && (
+                    <>
+                      <div className="bg-white border border-gray-300 rounded-[15px] p-4 text-center">
+                        <p className="text-sm text-gray-600">Ventas Totales</p>
+                        <p className="text-2xl font-bold text-green-600 mt-1">{formatCurrency(employeeStats.totalSales)}</p>
+                        <p className="text-xs text-gray-400 mt-1">{employeeStats.salesCount} ventas realizadas</p>
+                      </div>
+                      <div className="bg-white border border-gray-300 rounded-[15px] p-4 text-center">
+                        <p className="text-sm text-gray-600">Cotizaciones</p>
+                        <p className="text-2xl font-bold text-blue-600 mt-1">{formatCurrency(employeeStats.totalQuotes)}</p>
+                        <p className="text-xs text-gray-400 mt-1">{employeeStats.quotesCount} cotizaciones</p>
+                      </div>
+                      <div className="bg-white border border-gray-300 rounded-[15px] p-4 text-center">
+                        <p className="text-sm text-gray-600">Tasa de Conversión</p>
+                        <p className="text-2xl font-bold text-purple-600 mt-1">{employeeStats.conversionRate.toFixed(1)}%</p>
+                        <p className="text-xs text-gray-400 mt-1">{employeeStats.convertedQuotes} aprobadas</p>
+                      </div>
+                      <div className="bg-white border border-gray-300 rounded-[15px] p-4 text-center">
+                        <p className="text-sm text-gray-600">Ticket Promedio</p>
+                        <p className="text-2xl font-bold text-orange-600 mt-1">
+                          {employeeStats.salesCount > 0 
+                            ? formatCurrency(employeeStats.totalSales / employeeStats.salesCount) 
+                            : formatCurrency(0)}
+                        </p>
+                      </div>
+                    </>
+                  )}
+
                   {selectedEmployee.position.toLowerCase().includes('mesero') && (
                     <>
                       <div className="bg-white border border-gray-300 rounded-[15px] p-4 text-center">
@@ -625,34 +799,77 @@ export function AdminEmployees() {
                       </div>
                     </>
                   )}
-
-                  {!['mesero', 'chef', 'cajera', 'supervisor'].some(role => selectedEmployee.position.toLowerCase().includes(role)) && (
-                    <>
-                      <div className="bg-white border border-gray-300 rounded-[15px] p-4 text-center">
-                        <p className="text-sm text-gray-600">Tareas Completadas</p>
-                        <p className="text-2xl font-bold text-purple-600 mt-1">{Math.floor(Math.random() * 50) + 20}</p>
-                      </div>
-                      <div className="bg-white border border-gray-300 rounded-[15px] p-4 text-center">
-                        <p className="text-sm text-gray-600">Eficiencia</p>
-                        <p className="text-2xl font-bold text-green-600 mt-1">{(Math.random() * 20 + 75).toFixed(1)}%</p>
-                      </div>
-                      <div className="bg-white border border-gray-300 rounded-[15px] p-4 text-center">
-                        <p className="text-sm text-gray-600">Horas Trabajadas</p>
-                        <p className="text-2xl font-bold text-blue-600 mt-1">{Math.floor(Math.random() * 40) + 30}h</p>
-                      </div>
-                      <div className="bg-white border border-gray-300 rounded-[15px] p-4 text-center">
-                        <p className="text-sm text-gray-600">Calificación</p>
-                        <p className="text-2xl font-bold text-orange-600 mt-1">{(Math.random() * 2 + 3).toFixed(1)}/5</p>
-                      </div>
-                    </>
-                  )}
                 </div>
               </div>
 
               {/* Performance Charts */}
               <div className="mb-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Tendencias de Rendimiento (Últimos 3 Meses)</h3>
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Tendencias de Rendimiento (Últimos 6 Meses)</h3>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {(selectedEmployee.position.toLowerCase().includes('vendedor') || selectedEmployee.position.toLowerCase().includes('ventas')) && (
+                    <>
+                      {/* Ventas */}
+                      <div className="bg-white border border-gray-300 rounded-[15px] p-4">
+                        <h4 className="text-sm font-semibold text-gray-700 mb-3">Ventas Mensuales ($)</h4>
+                        <ResponsiveContainer width="100%" height={200}>
+                          <BarChart data={employeeStats.chartData}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="month" />
+                            <YAxis />
+                            <Tooltip formatter={(value: any) => formatCurrency(value)} />
+                            <Bar dataKey="ventas" fill="#10b981" name="Ventas" />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+
+                      {/* Cotizaciones */}
+                      <div className="bg-white border border-gray-300 rounded-[15px] p-4">
+                        <h4 className="text-sm font-semibold text-gray-700 mb-3">Cotizaciones Mensuales ($)</h4>
+                        <ResponsiveContainer width="100%" height={200}>
+                          <BarChart data={employeeStats.chartData}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="month" />
+                            <YAxis />
+                            <Tooltip formatter={(value: any) => formatCurrency(value)} />
+                            <Bar dataKey="cotizaciones" fill="#3b82f6" name="Cotizaciones" />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+
+                      {/* Comparativa */}
+                      <div className="bg-white border border-gray-300 rounded-[15px] p-4">
+                        <h4 className="text-sm font-semibold text-gray-700 mb-3">Ventas vs Cotizaciones</h4>
+                        <ResponsiveContainer width="100%" height={200}>
+                          <AreaChart data={employeeStats.chartData}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="month" />
+                            <YAxis />
+                            <Tooltip formatter={(value: any) => formatCurrency(value)} />
+                            <Area type="monotone" dataKey="cotizaciones" stackId="1" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.3} name="Cotizado" />
+                            <Area type="monotone" dataKey="ventas" stackId="2" stroke="#10b981" fill="#10b981" fillOpacity={0.5} name="Vendido" />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+
+                      {/* Eficiencia Cierre ($) */}
+                      <div className="bg-white border border-gray-300 rounded-[15px] p-4">
+                        <h4 className="text-sm font-semibold text-gray-700 mb-3">Eficiencia de Cierre ($)</h4>
+                        <ResponsiveContainer width="100%" height={200}>
+                          <LineChart data={employeeStats.chartData.map(d => ({
+                            ...d,
+                            eficiencia: d.cotizaciones > 0 ? (d.ventas / d.cotizaciones) * 100 : 0
+                          }))}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="month" />
+                            <YAxis domain={[0, 100]} />
+                            <Tooltip formatter={(value: any) => `${Number(value).toFixed(1)}%`} />
+                            <Line type="monotone" dataKey="eficiencia" stroke="#8b5cf6" strokeWidth={2} name="Eficiencia %" />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </>
+                  )}
+
                   {selectedEmployee.position.toLowerCase().includes('mesero') && (
                     <>
                       {/* Mesas Atendidas */}
@@ -888,66 +1105,6 @@ export function AdminEmployees() {
                             <Tooltip />
                             <Line type="monotone" dataKey="eficiencia" stroke="#f97316" strokeWidth={2} />
                           </LineChart>
-                        </ResponsiveContainer>
-                      </div>
-                    </>
-                  )}
-
-                  {!['mesero', 'chef', 'cajera', 'supervisor'].some(role => selectedEmployee.position.toLowerCase().includes(role)) && (
-                    <>
-                      {/* Tareas Completadas */}
-                      <div className="bg-white border border-gray-300 rounded-[15px] p-4">
-                        <h4 className="text-sm font-semibold text-gray-700 mb-3">Tareas Completadas por Mes</h4>
-                        <ResponsiveContainer width="100%" height={200}>
-                          <BarChart data={generateChartData(selectedEmployee.position)}>
-                            <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="month" />
-                            <YAxis />
-                            <Tooltip />
-                            <Bar dataKey="tareasCompletadas" fill="#8b5cf6" />
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </div>
-
-                      {/* Eficiencia */}
-                      <div className="bg-white border border-gray-300 rounded-[15px] p-4">
-                        <h4 className="text-sm font-semibold text-gray-700 mb-3">Eficiencia en el Trabajo</h4>
-                        <ResponsiveContainer width="100%" height={200}>
-                          <AreaChart data={generateChartData(selectedEmployee.position)}>
-                            <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="month" />
-                            <YAxis domain={[70, 100]} />
-                            <Tooltip />
-                            <Area type="monotone" dataKey="eficiencia" stroke="#10b981" fill="#10b981" fillOpacity={0.3} />
-                          </AreaChart>
-                        </ResponsiveContainer>
-                      </div>
-
-                      {/* Horas Trabajadas */}
-                      <div className="bg-white border border-gray-300 rounded-[15px] p-4">
-                        <h4 className="text-sm font-semibold text-gray-700 mb-3">Horas Trabajadas por Mes</h4>
-                        <ResponsiveContainer width="100%" height={200}>
-                          <LineChart data={generateChartData(selectedEmployee.position)}>
-                            <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="month" />
-                            <YAxis />
-                            <Tooltip />
-                            <Line type="monotone" dataKey="horasTrabajadas" stroke="#3b82f6" strokeWidth={2} />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      </div>
-
-                      {/* Calificación */}
-                      <div className="bg-white border border-gray-300 rounded-[15px] p-4">
-                        <h4 className="text-sm font-semibold text-gray-700 mb-3">Calificación General</h4>
-                        <ResponsiveContainer width="100%" height={200}>
-                          <AreaChart data={generateChartData(selectedEmployee.position)}>
-                            <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="month" />
-                            <YAxis domain={[0, 5]} />
-                            <Tooltip />
-                            <Area type="monotone" dataKey="calificacion" stroke="#f97316" fill="#f97316" fillOpacity={0.3} />
-                          </AreaChart>
                         </ResponsiveContainer>
                       </div>
                     </>
@@ -1540,6 +1697,7 @@ export function AdminEmployees() {
           </div>
         </div>
       )}
+      </div>
     </div>
   )
 } 
