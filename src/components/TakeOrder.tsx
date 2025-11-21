@@ -234,8 +234,8 @@ export function TakeOrder() {
     return cart.length > 0
   }
 
-  const isCurrentStepValid = () => {
-    switch(currentStep) {
+  const isStepValid = (step: number) => {
+    switch(step) {
       case 1: return isStep1Valid()
       case 2: return isStep2Valid()
       default: return true
@@ -325,7 +325,7 @@ export function TakeOrder() {
           }}
           backButtonText={t('previous')}
           nextButtonText={t('next')}
-          canProceed={isCurrentStepValid()}
+          validateStep={isStepValid}
         >
           {/* Paso 1: Selección de Mesa */}
           <Step>
