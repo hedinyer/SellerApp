@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import jsPDF from 'jspdf'
+import html2canvas from 'html2canvas'
 import { useConfig } from '../contexts/ConfigContext'
 import { supabase, type GarmentRecord } from '../lib/supabaseClient'
 import {
@@ -1079,11 +1081,7 @@ export function ClothingPOS() {
     } catch {}
   }
 
-  function printInvoice(sale: SaleRecord) {
-    try {
-      const w = window.open('', '_blank')
-      if (!w) return
-
+  const getInvoiceHTML = (sale: SaleRecord) => {
       const itemsHtml = sale.items.map(item => `
         <div class="item-row">
             <div class="item-image">
@@ -1122,7 +1120,7 @@ export function ClothingPOS() {
         </div>
       `
 
-      w.document.write(`
+      return `
         <!DOCTYPE html>
         <html>
         <head>
@@ -1234,18 +1232,21 @@ export function ClothingPOS() {
                 width: 100%;
                 max-width: 380px;
                 margin: 0 auto;
-                border: 1px solid #e5e7eb;
-                border-radius: 24px;
-                padding: 20px;
+                border: none;
+                border-radius: 0;
+                padding: 10px;
                 box-shadow: none;
               }
-              /* Adjust cutouts for print background */
               .dashed-line::before,
               .dashed-line::after {
                 background: white;
+                display: none; 
+              }
+              .dashed-line {
+                 border-top: 1px dashed #000;
               }
               @page { 
-                margin: 1cm;
+                margin: 0;
                 size: auto; 
               }
             }
@@ -1312,17 +1313,101 @@ export function ClothingPOS() {
                </div>
             </div>
           </div>
+        </body>
+        </html>
+      `
+  }
+
+  async function downloadInvoicePDF(sale: SaleRecord) {
+    const htmlContent = getInvoiceHTML(sale)
+    
+    // Extract body content for the canvas capture (we don't need full html/head for html2canvas)
+    // Actually html2canvas works better on rendered elements.
+    // We can reuse the container style but make it absolute.
+    
+    const container = document.createElement('div')
+    container.style.position = 'fixed'
+    container.style.top = '-10000px'
+    container.style.left = '0'
+    container.style.width = '380px'
+    container.style.zIndex = '-1000'
+    
+    // Extract content inside body
+    const bodyContentMatch = htmlContent.match(/<body>([\s\S]*)<\/body>/)
+    const bodyContent = bodyContentMatch ? bodyContentMatch[1] : htmlContent
+    
+    container.innerHTML = bodyContent
+    
+    // Add styles manually because they are in <head>
+    // We can just copy the style block
+    const styleMatch = htmlContent.match(/<style>([\s\S]*)<\/style>/)
+    if (styleMatch) {
+        const style = document.createElement('style')
+        style.innerHTML = styleMatch[1]
+        container.appendChild(style)
+    }
+
+    document.body.appendChild(container)
+
+    try {
+        // Wait for images to load
+        const images = container.querySelectorAll('img')
+        await Promise.all(Array.from(images).map(img => {
+            if (img.complete) return Promise.resolve()
+            return new Promise(resolve => {
+                img.onload = resolve
+                img.onerror = resolve
+            })
+        }))
+
+        const canvas = await html2canvas(container.querySelector('.container') as HTMLElement || container, {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: '#ffffff'
+        })
+
+        const imgData = canvas.toDataURL('image/png')
+        // Calculate PDF height in mm
+        // A4 width is 210mm. Receipt width is usually 80mm.
+        const pdfWidth = 80 
+        const pdfHeight = (canvas.height * pdfWidth) / canvas.width
+
+        const pdf = new jsPDF({
+            orientation: 'portrait',
+            unit: 'mm',
+            format: [pdfWidth, pdfHeight]
+        })
+
+        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight)
+        pdf.save(`Ticket-${sale.id}.pdf`)
+
+    } catch (err) {
+        console.error('Error generating PDF:', err)
+        alert('Error al generar PDF')
+    } finally {
+        document.body.removeChild(container)
+    }
+  }
+
+  function printInvoice(sale: SaleRecord) {
+    try {
+      const w = window.open('', '_blank')
+      if (!w) return
+      
+      const htmlContent = getInvoiceHTML(sale)
+      
+      const htmlWithScript = htmlContent.replace('</body>', `
           <script>
             window.onload = function() {
               setTimeout(function() {
                 window.print();
-                // window.close(); // Optional: close after print
               }, 500);
             }
           </script>
         </body>
-        </html>
       `)
+
+      w.document.write(htmlWithScript)
       w.document.close()
     } catch (error) {
       console.error('Error printing invoice:', error)
@@ -2330,6 +2415,13 @@ export function ClothingPOS() {
                       className="flex-1 py-2.5 text-gray-600 font-medium text-xs rounded-xl border border-gray-200 bg-white hover:bg-gray-50 transition-colors"
                   >
                       Cerrar
+                  </button>
+                  <button 
+                      onClick={() => downloadInvoicePDF(invoiceSale)}
+                      className="flex-1 py-2.5 text-white font-bold text-xs rounded-xl bg-blue-600 hover:bg-blue-700 flex items-center justify-center gap-2 transition-colors shadow-lg shadow-blue-600/20"
+                  >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                      PDF
                   </button>
                   <button 
                       onClick={() => printInvoice(invoiceSale)}
